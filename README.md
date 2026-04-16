@@ -1,47 +1,22 @@
-# Elson.AI: A source-available macOS alternative to WisprFlow.ai, Wispr Flow, and Willow Voice
+# Elson.AI: A source-available macOS voice assistant and Wispr Flow alternative
 
 Elson is a local-first macOS voice assistant for fast dictation, transcript cleanup, screenshot-aware replies, and paste-first desktop workflows.
 
-If you are looking for a `wisprflow.ai` / Wispr Flow alternative, a `wispr` / Wispr.ai alternative, or a `willowvoice` / Willow Voice alternative that you can inspect, build, package, and evaluate yourself, Elson is built for exactly that.
+If you are looking for a `wisprflow.ai alternative`, `Wispr Flow alternative`, `wispr alternative`, `Wispr.ai alternative`, `willowvoice alternative`, or `Willow Voice alternative` that you can inspect, build, package, and evaluate yourself, Elson is built for exactly that.
+
+Elson is not a demo. This repository already includes the native Swift/SwiftUI macOS app, build and packaging flows, preserve-state updates, distribution artifacts, prompt/config resources, and a public Python eval harness for Intent Agent replay testing.
 
 Operate Elson from the bubble. Speak once, and Elson decides what should happen next.
 
 Two modes. **Transcript** and **Agent**.
 
-**Transcript mode** is the part you already know from tools like WisprFlow.ai and Willow Voice: fast dictation, transcript cleanup, rewrites, shortening, translation, and polished text you can paste anywhere.
+**Transcript mode** is what people already expect from a modern dictation app for Mac: fast speech capture, transcript cleanup, rewriting, shortening, translation, and polished text you can paste anywhere.
 
-**Agent mode** brings skills and LLMs to your computer. Answer the email you are looking at. Draft the Slack reply you want to send. Say “reply to this in nice business English” and get a paste-ready answer back. If you want to say “I am not interested in another voice assistant”, Elson can write that too, just less painfully.
+**Agent mode** brings skills and LLMs to your computer. Reply to the email you are reading. Draft the Slack answer you want to send. Turn rough speech into a paste-ready response. Give Elson context and it can do more than transcribe.
 
-If Elson makes a mistake, just follow up in chat. Give feedback. Elson improves over time. Do not like the prompt? Tweak it. This repo already ships with a built-in eval pipeline, because every serious AI product should have evals.
+If Elson makes a mistake, follow up in chat. Leave feedback. Tweak the prompt. The repo includes a built-in eval pipeline because serious AI software should improve with measurement, not vibes.
 
-Elson can also use skills. Not fake “AI can do anything” skills, but actual skill discovery and skill context the app can load and use. That is a big part of the point.
-
-This is not just a demo app. The repo already contains the native Swift/SwiftUI macOS app, packaging and installer flows, preserve-state updates, distribution artifacts, prompt/config resources, and a public Python eval harness for Intent Agent replay testing.
-
-Operate Elson from the bubble. 
-<img width="207" height="306" alt="image" src="https://github.com/user-attachments/assets/dce9bb9a-779f-4cfc-89e7-cbf0a103211c" />
-
-Two Modes Agent and Transscript. 
-
-Transscript is what you know from tools like WisprFlow.ai and Willowvoice. 
-
-Agent Mode, is bringing the power of skills and LLMs to your computer. 
-Answer an email you see, speak what you want to answer and it will craft it, reply to this slack message with fuck off in nice business english. Write a reply that i am not interested in any other voice assistant. 
-
-Omfg Elson made a mistake simply follow up
-Chat with Elson <img width="734" height="773" alt="image" src="https://github.com/user-attachments/assets/d9af4f3b-6f97-43e2-a987-a9dd3a35ec35" />
-
-Elson imporves overtime automatically - you can feedback Elson and it will learn. 
-Elson can be highly customised, don't like the prompt? Just tweak it - with build in Eval pipeline. yes we build in Evaluations - every good AI product should have Evals buils in. 
-
-Elson can use skills - yes you read right we are first voice assitant you can connect to all your skills and let our agent just operate with it. 
-
-Roadmap: 
-* Bring in more LLMs right now we just developed around speed and stability
-  * We plan to bring in claude and openai models - right now we went for speed first
-* OpenRouter Integration
-
-* In case you want to work on it! Do evals >> we need basically prompts tweaked to every LLM -> failure rates below 3% are okish and will be accepted.
+Elson can also use skills. Not fake “AI can do anything” skills, but actual skill discovery and skill context the app can load and use.
 
 
 > **Truth rail**
@@ -52,8 +27,41 @@ Roadmap:
 > - The checked-in build system currently supports two macOS targets: `compat15` for macOS 15+ and `modern` for macOS 26+.
 > - `./build.sh` is the canonical **full reset + reinstall** path. `./update.sh` is the canonical **preserve-state update** path.
 
+## Screenshots
+
+The screenshots should prove the product fast:
+
+- Elson feels native on macOS
+- Transcript mode is the familiar dictation path
+- Agent mode gives you a follow-up loop instead of a dead-end one-shot answer
+
+### Bubble UI
+
+Operate Elson from the bubble. This is the fastest way to understand the product: it lives on your Mac, stays close to the active app, and is built for desktop workflows rather than a hosted dashboard.
+
+<p align="center">
+  <img width="207" height="306" alt="Elson bubble UI on macOS for fast voice capture and dictation" src="https://github.com/user-attachments/assets/dce9bb9a-779f-4cfc-89e7-cbf0a103211c" />
+</p>
+
+<p align="center">
+  <sub>The bubble is the fast entry point for voice capture, dictation, and local desktop assistance.</sub>
+</p>
+
+### Follow-up chat and feedback loop
+
+This is the second important proof point. Elson is not just “speak once and pray.” If it gets something wrong, you follow up in chat, correct it, and keep going. That matters if you want a real Wispr Flow alternative or Willow Voice alternative that improves over time.
+
+<p align="center">
+  <img width="734" height="773" alt="Elson follow-up chat UI for transcript corrections, feedback, and agent replies" src="https://github.com/user-attachments/assets/d9af4f3b-6f97-43e2-a987-a9dd3a35ec35" />
+</p>
+
+<p align="center">
+  <sub>Follow up, correct the result, leave feedback, and iterate instead of starting from zero.</sub>
+</p>
+
 ## Table of Contents
 
+- [Screenshots](#screenshots)
 - [Why Elson exists](#why-elson-exists)
 - [What is in this repository today](#what-is-in-this-repository-today)
 - [Who Elson is for](#who-elson-is-for)
