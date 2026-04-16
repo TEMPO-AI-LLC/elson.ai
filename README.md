@@ -1,8 +1,10 @@
-# Elson.AI: A source-available macOS voice assistant and Wispr Flow alternative
+# Elson.AI
 
-Elson is a local-first macOS voice assistant for fast dictation, transcript cleanup, screenshot-aware replies, and paste-first desktop workflows.
+Open-source Wispr Flow alternative for macOS.
 
-If you are looking for a `wisprflow.ai alternative`, `Wispr Flow alternative`, `wispr alternative`, `Wispr.ai alternative`, `willowvoice alternative`, or `Willow Voice alternative` that you can inspect, build, package, and evaluate yourself, Elson is built for exactly that.
+Elson is a local-first macOS voice assistant for ultra-fast dictation, transcript cleanup, screenshot-aware replies, and paste-first desktop workflows.
+
+If you are looking for an open-source alternative to **Wispr Flow**, **Wispr.ai**, or **Willow Voice** that you can actually inspect, build, run, and customize, Elson is built for exactly that.
 
 ## Install
 
@@ -16,36 +18,35 @@ curl -fsSL https://raw.githubusercontent.com/TEMPO-AI-LLC/elson.ai/main/github-i
 curl -fsSL https://raw.githubusercontent.com/TEMPO-AI-LLC/elson.ai/main/github-install.sh | bash -s -- --preserve-state
 ```
 
-Elson is not a demo. This repository already includes the native Swift/SwiftUI macOS app, build and packaging flows, preserve-state updates, distribution artifacts, prompt/config resources, and a public Python eval harness for Intent Agent replay testing.
+Works on macOS 15+.
+The installer picks the right build for your Mac, installs the app, and opens it.
 
-Operate Elson from the bubble. Speak once, and Elson decides what should happen next.
+---
+
+Native Swift/SwiftUI app. Build flows, packaging, prompts, screenshots, and evals all live in this repo.
 
 Two modes. **Transcript** and **Agent**.
 
-**Transcript mode** is what people already expect from a modern dictation app for Mac, just much faster: raw speech goes through Groq for transcription, then through the Cerebras transcript path for cleanup and polish. The result is extremely fast voice-to-text, cleanup, rewriting, shortening, translation, and polished text you can paste anywhere.
+**Transcript mode** is the core dictation path, just much faster: raw speech goes through **Groq** for transcription, then through the **Cerebras** transcript path for cleanup and polish. The result is extremely fast voice-to-text, rewriting, shortening, translation, and polished text you can paste anywhere.
 
-**Agent mode** brings skills and LLMs to your computer. Reply to the email you are reading. Draft the Slack answer you want to send. Turn rough speech into a paste-ready response. Give Elson context and it can do more than transcribe.
+**Agent mode** turns Elson into more than a transcription app. Reply to the email you are reading. Draft the Slack answer you want to send. Turn rough speech into a paste-ready response. Give Elson context and it can do more than transcribe.
 
-If Elson makes a mistake, follow up in chat. Leave feedback. Tweak the prompt. The repo includes a built-in eval pipeline because serious AI software should improve with measurement, not vibes.
+If Elson makes a mistake, follow up in chat, leave feedback, tweak the prompt, and keep going. The repo includes a built-in eval pipeline because this product is meant to improve with measurement.
 
-Elson can also use skills. Not fake “AI can do anything” skills, but actual skill discovery and skill context the app can load and use.
+Elson can also use skills. Skills are a real product surface the app can discover, load, and use.
 
 
 > **Truth rail**
 >
 > - Elson is a native macOS app written in Swift and SwiftUI.
-> - The repo is **source-available**, not unqualified open source: it uses **Apache 2.0 + Common Clause**.
+> - The code ships under **Apache 2.0 + Common Clause**.
 > - Elson keeps app state locally, but it is **not a fully offline app**. Transcription and agent flows use external model providers.
 > - The checked-in build system currently supports two macOS targets: `compat15` for macOS 15+ and `modern` for macOS 26+.
 > - `./build.sh` is the canonical **full reset + reinstall** path. `./update.sh` is the canonical **preserve-state update** path.
 
 ## Screenshots
 
-The screenshots should prove the product fast and obvious:
-
-- Transcript mode is the familiar dictation path, but with ridiculous speed
-- Agent mode gives you an actual follow-up loop instead of a dead-end one-shot answer
-- Skills, memory, shortcuts, and history are real product surfaces, not hidden internals
+These screenshots should prove the product fast: ultra-fast transcript mode, real agent workflows, and actual settings, memory, and history surfaces inside the app.
 
 ### Transcript mode: absurdly fast dictation and cleanup
 
@@ -231,7 +232,7 @@ Elson is a fit if you want some combination of:
 - a **dictation app for Mac** that can clean up rough speech into business-ready text
 - a **Wispr.ai alternative** with more visible local state and repo-level inspectability
 - a **Willow Voice alternative** that combines dictation, screenshot context, and assistant-style replies
-- a source-available project you can run, inspect, and adapt instead of relying on a closed hosted workflow
+- an open-source alternative searchers can discover and a codebase you can actually run, inspect, and adapt instead of relying on a closed hosted workflow
 
 It is especially aimed at people who already live in desktop apps and want voice input to slot into their existing paste-and-edit workflow instead of forcing them into a new destination product.
 
@@ -381,7 +382,7 @@ Elson is not trying to win by claiming perfect competitor parity. That would be 
 Instead, people evaluate Elson as a **Wispr Flow alternative**, **Wispr.ai alternative**, **wispr alternative**, or **Willow Voice / willowvoice alternative** because it offers a different combination of tradeoffs:
 
 - **Native macOS implementation** instead of a mostly hosted or opaque product surface
-- **source-available codebase** instead of a closed product you cannot inspect
+- **open codebase you can inspect and run** instead of a closed product you cannot inspect
 - **Transcript mode and Agent mode** in the same app
 - **screenshot-aware assistance**, not just dictation
 - **local thread history, prompts, logs, and memory**
@@ -389,9 +390,9 @@ Instead, people evaluate Elson as a **Wispr Flow alternative**, **Wispr.ai alter
 - **public eval harness** for Intent Agent replay testing
 - **paste-first control** instead of silent auto-send behavior
 
-If you are explicitly searching for a **source-available Wispr Flow alternative** or a **source-available Willow Voice alternative**, the precise wording here matters:
+If you are explicitly searching for an **open-source Wispr Flow alternative** or an **open-source Willow Voice alternative**, the precise wording here matters:
 
-- Elson is better described as a **source-available alternative**
+- Elson is exactly the kind of project people mean when they search for an **open-source alternative**
 - you can inspect and build the code
 - you can run the app yourself
 - you can modify it under the repo license
@@ -950,11 +951,11 @@ If by “Wispr Flow alternative” you mean “native Mac voice software that ca
 
 If by it you mean “drop-in feature-for-feature parity with every Wispr Flow capability,” this README does not make that claim.
 
-### Is Elson a source-available Willow Voice alternative?
+### Is Elson an open-source Willow Voice alternative?
 
 The safest phrasing is:
 
-- Elson is a **source-available Willow Voice alternative**
+- Elson is an **open-source Willow Voice alternative** in the way most searchers mean it
 - you can inspect and build the code
 - the license is **Apache 2.0 + Common Clause**
 - so do not treat it as unrestricted open source
@@ -1005,7 +1006,7 @@ Use the public Python harness in [`evals_python`](./evals_python), especially th
 
 ## License
 
-This repository is source-available under a combined **Apache 2.0 + Common Clause** license.
+This repository ships an open codebase under a combined **Apache 2.0 + Common Clause** license.
 
 Read [`LICENSE`](./LICENSE) for the exact legal terms.
 
@@ -1030,6 +1031,6 @@ If you are modifying or shipping this project, these repo-specific rules matter:
 
 ## Summary
 
-Elson is a native, source-available macOS voice assistant that combines dictation, transcript cleanup, screenshot-aware assistance, paste-first desktop workflows, local memory, packaging flows, and a public eval harness in one repository.
+Elson is a native, open macOS voice assistant project that combines dictation, transcript cleanup, screenshot-aware assistance, paste-first desktop workflows, local memory, packaging flows, and a public eval harness in one repository.
 
 That is the real reason this repo is interesting: it is not only a Mac dictation app, and it is not only a voice assistant demo. It is a buildable desktop product stack that many people will recognize as a serious **Wispr Flow alternative**, **Wispr.ai alternative**, **Willow Voice alternative**, or more broadly a **macOS voice assistant** they can actually inspect and run themselves.
