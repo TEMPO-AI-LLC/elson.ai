@@ -115,7 +115,7 @@ This is one of the strongest reasons Elson feels like a real macOS product inste
 </p>
 
 <p align="center">
-  <img width="67%" alt="Elson shortcut settings on macOS showing separate transcript and agent shortcuts" src="./assets/readme/shortcuts-settings.png" />
+  <img width="67%" alt="Elson history view on macOS for reopening transcript and agent runs" src="./assets/readme/history-view.png" />
 </p>
 
 <p align="center">
@@ -126,10 +126,10 @@ This is one of the strongest reasons Elson feels like a real macOS product inste
 
 The History view proves the output is not disposable. Transcript runs and agent runs are saved locally, can be reopened, and can be continued. That matters if you want a real Wispr Flow alternative or Willow Voice alternative instead of a one-shot voice box with no memory.
 
-<p align="center">
-  <img width="67%" alt="Elson history view on macOS for reopening transcript and agent runs" src="./assets/readme/history-view.png" />
-</p>
 
+<p align="center">
+  <img width="67%" alt="Elson shortcut settings on macOS showing separate transcript and agent shortcuts" src="./assets/readme/shortcuts-settings.png" />
+</p>
 <p align="center">
   <sub>Local history makes outputs reusable, reviewable, and easy to continue instead of disappearing after one interaction.</sub>
 </p>
