@@ -6,6 +6,32 @@ If you are looking for a `wisprflow.ai` / Wispr Flow alternative, a Wispr.ai alt
 
 Elson is not just a demo app. This repo already contains the native Swift/SwiftUI macOS app, packaging and installer flows, preserve-state updates, distribution artifacts, prompt/config resources, and a public Python eval harness for Intent Agent replay testing.
 
+Operate Elson from the bubble. 
+<img width="207" height="306" alt="image" src="https://github.com/user-attachments/assets/dce9bb9a-779f-4cfc-89e7-cbf0a103211c" />
+
+Two Modes Agent and Transscript. 
+
+Transscript is what you know from tools like WisprFlow.ai and Willowvoice. 
+
+Agent Mode, is bringing the power of skills and LLMs to your computer. 
+Answer an email you see, speak what you want to answer and it will craft it, reply to this slack message with fuck off in nice business english. Write a reply that i am not interested in any other voice assistant. 
+
+Omfg Elson made a mistake simply follow up
+Chat with Elson <img width="734" height="773" alt="image" src="https://github.com/user-attachments/assets/d9af4f3b-6f97-43e2-a987-a9dd3a35ec35" />
+
+Elson imporves overtime automatically - you can feedback Elson and it will learn. 
+Elson can be highly customised, don't like the prompt? Just tweak it - with build in Eval pipeline. yes we build in Evaluations - every good AI product should have Evals buils in. 
+
+Elson can use skills - yes you read right we are first voice assitant you can connect to all your skills and let our agent just operate with it. 
+
+Roadmap: 
+* Bring in more LLMs right now we just developed around speed and stability
+  * We plan to bring in claude and openai models - right now we went for speed first
+* OpenRouter Integration
+
+* In case you want to work on it! Do evals >> we need basically prompts tweaked to every LLM -> failure rates below 3% are okish and will be accepted.
+
+
 > **Truth rail**
 >
 > - Elson is a native macOS app written in Swift and SwiftUI.
