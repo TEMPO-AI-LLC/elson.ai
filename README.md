@@ -18,6 +18,15 @@ If Elson makes a mistake, follow up in chat. Leave feedback. Tweak the prompt. T
 
 Elson can also use skills. Not fake “AI can do anything” skills, but actual skill discovery and skill context the app can load and use.
 
+Hey, copy-paste this into Claude, Codex, or your terminal and just run it.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TEMPO-AI-LLC/elson.ai/main/github-install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/TEMPO-AI-LLC/elson.ai/main/github-install.sh | bash -s -- --preserve-state
+```
+
+First line = clean install. Second line = update while keeping local config, history, and API keys.
+
 
 > **Truth rail**
 >
@@ -40,7 +49,7 @@ The screenshots should prove the product fast and obvious:
 This is the screenshot that should sell the transcript path. Elson is not trying to be another slow, mushy dictation layer. Transcript mode is optimized around speed and stability: **Groq handles the raw speech-to-text step, then the Cerebras transcript path cleans it up into paste-ready text** fast enough that the whole flow feels immediate.
 
 <p align="center">
-  <img width="820" alt="Elson transcript mode on macOS for ultra-fast dictation, cleanup, and paste-ready text" src="./assets/readme/transcript-mode.png" />
+  <img width="67%" alt="Elson transcript mode on macOS for ultra-fast dictation, cleanup, and paste-ready text" src="./assets/readme/transcript-mode.png" />
 </p>
 
 <p align="center">
@@ -52,7 +61,7 @@ This is the screenshot that should sell the transcript path. Elson is not trying
 This is where Elson stops being “just dictation”. Agent mode can look at what you are doing, use context, and generate a real answer you can use. Reply to an email. Draft a Slack response. Ask what you are doing and how to do it better. Give it context and it does more than transcribe.
 
 <p align="center">
-  <img width="820" alt="Elson agent mode on macOS for contextual replies, desktop help, and paste-ready responses" src="./assets/readme/agent-mode.png" />
+  <img width="67%" alt="Elson agent mode on macOS for contextual replies, desktop help, and paste-ready responses" src="./assets/readme/agent-mode.png" />
 </p>
 
 <p align="center">
@@ -64,7 +73,7 @@ This is where Elson stops being “just dictation”. Agent mode can look at wha
 The follow-up loop matters because Elson is not “speak once and pray.” If it gets something wrong, you follow up in chat, correct it, and keep going. That is a much better product loop than one-shot transcription with no iteration.
 
 <p align="center">
-  <img width="820" alt="Elson follow-up chat on macOS for correcting transcript and agent outputs in context" src="./assets/readme/agent-mode.png" />
+  <img width="67%" alt="Elson follow-up chat on macOS for correcting transcript and agent outputs in context" src="./assets/readme/agent-mode.png" />
 </p>
 
 <p align="center">
@@ -78,7 +87,7 @@ The Skills view proves that Elson is not a fake “AI can do everything” wrapp
 That matters for Agent mode because it turns Elson into a voice interface for actual tools and workflows, not just a prettier chat box.
 
 <p align="center">
-  <img width="820" alt="Elson skills settings on macOS showing skill discovery, scope selection, and skill search" src="./assets/readme/skills-settings.png" />
+  <img width="67%" alt="Elson skills settings on macOS showing skill discovery, scope selection, and skill search" src="./assets/readme/skills-settings.png" />
 </p>
 
 <p align="center">
@@ -92,7 +101,7 @@ The recording and shortcut settings show the actual desktop workflow philosophy:
 This is one of the strongest reasons Elson feels like a real macOS product instead of a hosted AI product trying to cosplay as one.
 
 <p align="center">
-  <img width="820" alt="Elson recording settings on macOS showing hold-to-record, auto-paste, clipboard, and mute options" src="./assets/readme/recording-settings.png" />
+  <img width="67%" alt="Elson recording settings on macOS showing hold-to-record, auto-paste, clipboard, and mute options" src="./assets/readme/recording-settings.png" />
 </p>
 
 <p align="center">
@@ -100,7 +109,7 @@ This is one of the strongest reasons Elson feels like a real macOS product inste
 </p>
 
 <p align="center">
-  <img width="820" alt="Elson shortcut settings on macOS showing separate transcript and agent shortcuts" src="./assets/readme/shortcuts-settings.png" />
+  <img width="67%" alt="Elson shortcut settings on macOS showing separate transcript and agent shortcuts" src="./assets/readme/shortcuts-settings.png" />
 </p>
 
 <p align="center">
@@ -112,7 +121,7 @@ This is one of the strongest reasons Elson feels like a real macOS product inste
 The History view proves the output is not disposable. Transcript runs and agent runs are saved locally, can be reopened, and can be continued. That matters if you want a real Wispr Flow alternative or Willow Voice alternative instead of a one-shot voice box with no memory.
 
 <p align="center">
-  <img width="820" alt="Elson history view on macOS for reopening transcript and agent runs" src="./assets/readme/history-view.png" />
+  <img width="67%" alt="Elson history view on macOS for reopening transcript and agent runs" src="./assets/readme/history-view.png" />
 </p>
 
 <p align="center">
@@ -126,7 +135,7 @@ The Elson.md screen shows one of the most important product ideas in the app: pe
 This is part of why Elson feels personal and configurable rather than fixed and closed.
 
 <p align="center">
-  <img width="820" alt="Elson local memory view on macOS showing Elson.md profile, preferences, notes, reminders, and open loops" src="./assets/readme/elson-memory-view.png" />
+  <img width="67%" alt="Elson local memory view on macOS showing Elson.md profile, preferences, notes, reminders, and open loops" src="./assets/readme/elson-memory-view.png" />
 </p>
 
 <p align="center">
@@ -624,6 +633,17 @@ The shipped distribution docs describe this behavior:
 - GitHub release-style URLs
 
 That makes the repo usable for both local builds and externally hosted artifacts.
+
+### GitHub one-liner release contract
+
+The README one-liner installer is designed around **GitHub Releases**.
+
+For the command at the top of this README to stay valid, the latest public GitHub Release must upload these assets:
+
+- `elson-modern-latest.dmg`
+- `elson-compat15-latest.dmg`
+
+The GitHub bootstrap script selects between those two DMGs based on the user’s macOS version, then hands off to the canonical `install.sh`.
 
 ## Configuration and local development
 
