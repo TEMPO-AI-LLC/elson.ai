@@ -1,10 +1,22 @@
-# Elson.AI: An open-source MacOS alternative to tools like WisprFlow.ai and Willowvoice
+# Elson.AI: A source-available macOS alternative to WisprFlow.ai, Wispr Flow, and Willow Voice
 
 Elson is a local-first macOS voice assistant for fast dictation, transcript cleanup, screenshot-aware replies, and paste-first desktop workflows.
 
-If you are looking for a `wisprflow.ai` / Wispr Flow alternative, a Wispr.ai alternative, or a Willow Voice alternative that you can inspect, build, package, and evaluate yourself, this repository is the public source-available codebase for that stack.
+If you are looking for a `wisprflow.ai` / Wispr Flow alternative, a `wispr` / Wispr.ai alternative, or a `willowvoice` / Willow Voice alternative that you can inspect, build, package, and evaluate yourself, Elson is built for exactly that.
 
-Elson is not just a demo app. This repo already contains the native Swift/SwiftUI macOS app, packaging and installer flows, preserve-state updates, distribution artifacts, prompt/config resources, and a public Python eval harness for Intent Agent replay testing.
+Operate Elson from the bubble. Speak once, and Elson decides what should happen next.
+
+Two modes. **Transcript** and **Agent**.
+
+**Transcript mode** is the part you already know from tools like WisprFlow.ai and Willow Voice: fast dictation, transcript cleanup, rewrites, shortening, translation, and polished text you can paste anywhere.
+
+**Agent mode** brings skills and LLMs to your computer. Answer the email you are looking at. Draft the Slack reply you want to send. Say “reply to this in nice business English” and get a paste-ready answer back. If you want to say “I am not interested in another voice assistant”, Elson can write that too, just less painfully.
+
+If Elson makes a mistake, just follow up in chat. Give feedback. Elson improves over time. Do not like the prompt? Tweak it. This repo already ships with a built-in eval pipeline, because every serious AI product should have evals.
+
+Elson can also use skills. Not fake “AI can do anything” skills, but actual skill discovery and skill context the app can load and use. That is a big part of the point.
+
+This is not just a demo app. The repo already contains the native Swift/SwiftUI macOS app, packaging and installer flows, preserve-state updates, distribution artifacts, prompt/config resources, and a public Python eval harness for Intent Agent replay testing.
 
 Operate Elson from the bubble. 
 <img width="207" height="306" alt="image" src="https://github.com/user-attachments/assets/dce9bb9a-779f-4cfc-89e7-cbf0a103211c" />
@@ -48,6 +60,7 @@ Roadmap:
 - [Product modes](#product-modes)
 - [Core user-facing features](#core-user-facing-features)
 - [Why people evaluate Elson as a Wispr Flow or Willow Voice alternative](#why-people-evaluate-elson-as-a-wispr-flow-or-willow-voice-alternative)
+- [Roadmap](#roadmap)
 - [For builders and maintainers](#for-builders-and-maintainers)
 - [Quick start](#quick-start)
 - [Build, install, update, and rebuild semantics](#build-install-update-and-rebuild-semantics)
@@ -271,7 +284,7 @@ The app is opinionated about latency and execution-stage visibility rather than 
 
 Elson is not trying to win by claiming perfect competitor parity. That would be sloppy and misleading.
 
-Instead, people evaluate Elson as a **Wispr Flow alternative**, **Wispr.ai alternative**, or **Willow Voice alternative** because it offers a different combination of tradeoffs:
+Instead, people evaluate Elson as a **Wispr Flow alternative**, **Wispr.ai alternative**, **wispr alternative**, or **Willow Voice / willowvoice alternative** because it offers a different combination of tradeoffs:
 
 - **Native macOS implementation** instead of a mostly hosted or opaque product surface
 - **source-available codebase** instead of a closed product you cannot inspect
@@ -282,13 +295,27 @@ Instead, people evaluate Elson as a **Wispr Flow alternative**, **Wispr.ai alter
 - **public eval harness** for Intent Agent replay testing
 - **paste-first control** instead of silent auto-send behavior
 
-If you are explicitly searching for an **open-source Wispr Flow alternative** or an **open-source Willow Voice alternative**, the precise wording here matters:
+If you are explicitly searching for a **source-available Wispr Flow alternative** or a **source-available Willow Voice alternative**, the precise wording here matters:
 
 - Elson is better described as a **source-available alternative**
 - you can inspect and build the code
 - you can run the app yourself
 - you can modify it under the repo license
 - but the **Common Clause** means you should not describe it as unrestricted open source
+
+## Roadmap
+
+The current build was optimized around **speed first** and **stability first**.
+
+What we want next:
+
+- more model choice, not just the current speed-leaning defaults
+- Claude model support
+- OpenAI model support
+- OpenRouter integration
+- more eval work across providers and prompts so failures keep dropping
+
+If you want to contribute, evals are one of the highest-leverage places to work. A lot of the work is prompt tuning, routing cleanup, and model-specific adaptation. The quality bar is simple: get the failure rates down and keep them there. Sub-3% failure rates for supported paths are a reasonable target.
 
 ## For builders and maintainers
 
@@ -818,7 +845,7 @@ If by “Wispr Flow alternative” you mean “native Mac voice software that ca
 
 If by it you mean “drop-in feature-for-feature parity with every Wispr Flow capability,” this README does not make that claim.
 
-### Is Elson an open-source Willow Voice alternative?
+### Is Elson a source-available Willow Voice alternative?
 
 The safest phrasing is:
 
