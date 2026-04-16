@@ -4,6 +4,18 @@ Elson is a local-first macOS voice assistant for fast dictation, transcript clea
 
 If you are looking for a `wisprflow.ai alternative`, `Wispr Flow alternative`, `wispr alternative`, `Wispr.ai alternative`, `willowvoice alternative`, or `Willow Voice alternative` that you can inspect, build, package, and evaluate yourself, Elson is built for exactly that.
 
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TEMPO-AI-LLC/elson.ai/main/github-install.sh | bash
+```
+
+## Update
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TEMPO-AI-LLC/elson.ai/main/github-install.sh | bash -s -- --preserve-state
+```
+
 Elson is not a demo. This repository already includes the native Swift/SwiftUI macOS app, build and packaging flows, preserve-state updates, distribution artifacts, prompt/config resources, and a public Python eval harness for Intent Agent replay testing.
 
 Operate Elson from the bubble. Speak once, and Elson decides what should happen next.
@@ -17,15 +29,6 @@ Two modes. **Transcript** and **Agent**.
 If Elson makes a mistake, follow up in chat. Leave feedback. Tweak the prompt. The repo includes a built-in eval pipeline because serious AI software should improve with measurement, not vibes.
 
 Elson can also use skills. Not fake “AI can do anything” skills, but actual skill discovery and skill context the app can load and use.
-
-Hey, copy-paste this into Claude, Codex, or your terminal and just run it.
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/TEMPO-AI-LLC/elson.ai/main/github-install.sh | bash
-curl -fsSL https://raw.githubusercontent.com/TEMPO-AI-LLC/elson.ai/main/github-install.sh | bash -s -- --preserve-state
-```
-
-First line = clean install. Second line = update while keeping local config, history, and API keys.
 
 
 > **Truth rail**
