@@ -25,3 +25,4 @@ Config/local-config.json
 *.xcworkspace
 distribution/*.zip
 elson-universal-installer.zip
+.omx/*
