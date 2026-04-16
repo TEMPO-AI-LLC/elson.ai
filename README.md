@@ -10,7 +10,7 @@ Operate Elson from the bubble. Speak once, and Elson decides what should happen 
 
 Two modes. **Transcript** and **Agent**.
 
-**Transcript mode** is what people already expect from a modern dictation app for Mac: fast speech capture, transcript cleanup, rewriting, shortening, translation, and polished text you can paste anywhere.
+**Transcript mode** is what people already expect from a modern dictation app for Mac, just much faster: raw speech goes through Groq for transcription, then through the Cerebras transcript path for cleanup and polish. The result is extremely fast voice-to-text, cleanup, rewriting, shortening, translation, and polished text you can paste anywhere.
 
 **Agent mode** brings skills and LLMs to your computer. Reply to the email you are reading. Draft the Slack answer you want to send. Turn rough speech into a paste-ready response. Give Elson context and it can do more than transcribe.
 
@@ -29,34 +29,108 @@ Elson can also use skills. Not fake “AI can do anything” skills, but actual 
 
 ## Screenshots
 
-The screenshots should prove the product fast:
+The screenshots should prove the product fast and obvious:
 
-- Elson feels native on macOS
-- Transcript mode is the familiar dictation path
-- Agent mode gives you a follow-up loop instead of a dead-end one-shot answer
+- Transcript mode is the familiar dictation path, but with ridiculous speed
+- Agent mode gives you an actual follow-up loop instead of a dead-end one-shot answer
+- Skills, memory, shortcuts, and history are real product surfaces, not hidden internals
 
-### Bubble UI
+### Transcript mode: absurdly fast dictation and cleanup
 
-Operate Elson from the bubble. This is the fastest way to understand the product: it lives on your Mac, stays close to the active app, and is built for desktop workflows rather than a hosted dashboard.
+This is the screenshot that should sell the transcript path. Elson is not trying to be another slow, mushy dictation layer. Transcript mode is optimized around speed and stability: **Groq handles the raw speech-to-text step, then the Cerebras transcript path cleans it up into paste-ready text** fast enough that the whole flow feels immediate.
 
 <p align="center">
-  <img width="207" height="306" alt="Elson bubble UI on macOS for fast voice capture and dictation" src="https://github.com/user-attachments/assets/dce9bb9a-779f-4cfc-89e7-cbf0a103211c" />
+  <img width="820" alt="Elson transcript mode on macOS for ultra-fast dictation, cleanup, and paste-ready text" src="./assets/readme/transcript-mode.png" />
 </p>
 
 <p align="center">
-  <sub>The bubble is the fast entry point for voice capture, dictation, and local desktop assistance.</sub>
+  <sub>Groq for transcription, Cerebras for transcript cleanup, and a voice-to-text flow that feels instant instead of sluggish.</sub>
+</p>
+
+### Agent mode: more than transcription
+
+This is where Elson stops being “just dictation”. Agent mode can look at what you are doing, use context, and generate a real answer you can use. Reply to an email. Draft a Slack response. Ask what you are doing and how to do it better. Give it context and it does more than transcribe.
+
+<p align="center">
+  <img width="820" alt="Elson agent mode on macOS for contextual replies, desktop help, and paste-ready responses" src="./assets/readme/agent-mode.png" />
+</p>
+
+<p align="center">
+  <sub>Agent mode turns Elson from a dictation tool into a desktop assistant that can actually respond to what is on your screen.</sub>
 </p>
 
 ### Follow-up chat and feedback loop
 
-This is the second important proof point. Elson is not just “speak once and pray.” If it gets something wrong, you follow up in chat, correct it, and keep going. That matters if you want a real Wispr Flow alternative or Willow Voice alternative that improves over time.
+The History view proves the output is not disposable. Transcript runs and agent runs are saved locally, can be reopened, and can be continued. That matters if you want a real Wispr Flow alternative or Willow Voice alternative instead of a one-shot voice box with no memory.
 
 <p align="center">
-  <img width="734" height="773" alt="Elson follow-up chat UI for transcript corrections, feedback, and agent replies" src="https://github.com/user-attachments/assets/d9af4f3b-6f97-43e2-a987-a9dd3a35ec35" />
+  <img width="820" alt="Elson history view on macOS for reopening transcript and agent runs" src="./assets/readme/history-view.png" />
 </p>
 
 <p align="center">
-  <sub>Follow up, correct the result, leave feedback, and iterate instead of starting from zero.</sub>
+  <sub>Local history makes outputs reusable, reviewable, and easy to continue instead of disappearing after one interaction.</sub>
+</p>
+
+### Skills: connect Elson to real workflows
+
+The Skills view proves that Elson is not a fake “AI can do everything” wrapper. Skills are a real product surface. You can enable them, scan them, scope them, search them, and decide how broad the assistant should operate.
+
+That matters for Agent mode because it turns Elson into a voice interface for actual tools and workflows, not just a prettier chat box.
+
+<p align="center">
+  <img width="820" alt="Elson skills settings on macOS showing skill discovery, scope selection, and skill search" src="./assets/readme/skills-settings.png" />
+</p>
+
+<p align="center">
+  <sub>Skills are configurable, discoverable, and scoped inside the product instead of being hand-wavy marketing promises.</sub>
+</p>
+
+### Recording and shortcuts: built for speed, not ceremony
+
+The recording and shortcut settings show the actual desktop workflow philosophy: hold to record, release to stop, auto-paste into the active field, optional clipboard copy, optional clipboard restore, and separate shortcuts for transcript and agent actions.
+
+This is one of the strongest reasons Elson feels like a real macOS product instead of a hosted AI product trying to cosplay as one.
+
+<p align="center">
+  <img width="820" alt="Elson recording settings on macOS showing hold-to-record, auto-paste, clipboard, and mute options" src="./assets/readme/recording-settings.png" />
+</p>
+
+<p align="center">
+  <sub>Transcript mode is optimized for speed: hold to record, release to stop, and optionally auto-paste the cleaned result immediately.</sub>
+</p>
+
+<p align="center">
+  <img width="820" alt="Elson shortcut settings on macOS showing separate transcript and agent shortcuts" src="./assets/readme/shortcuts-settings.png" />
+</p>
+
+<p align="center">
+  <sub>Separate shortcuts for transcript and agent paths make the product feel immediate instead of modal and clumsy.</sub>
+</p>
+
+### History: your outputs are not disposable
+
+The follow-up loop matters because Elson is not “speak once and pray.” If it gets something wrong, you follow up in chat, correct it, and keep going. That is a much better product loop than one-shot transcription with no iteration.
+
+<p align="center">
+  <img width="820" alt="Elson follow-up chat on macOS for correcting transcript and agent outputs in context" src="./assets/readme/agent-mode.png" />
+</p>
+
+<p align="center">
+  <sub>Follow up, refine the result, and keep the interaction going instead of starting from zero every time.</sub>
+</p>
+
+### Elson.md memory: customization and persistence
+
+The Elson.md screen shows one of the most important product ideas in the app: persistent local memory and customisation. You can keep profile data, preferences, important words, notes, reminders, and open loops in a place the assistant can use.
+
+This is part of why Elson feels personal and configurable rather than fixed and closed.
+
+<p align="center">
+  <img width="820" alt="Elson local memory view on macOS showing Elson.md profile, preferences, notes, reminders, and open loops" src="./assets/readme/elson-memory-view.png" />
+</p>
+
+<p align="center">
+  <sub>Elson.md gives the assistant persistent local memory instead of forcing you to repeat the same context over and over.</sub>
 </p>
 
 ## Table of Contents
