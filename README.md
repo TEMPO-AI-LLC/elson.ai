@@ -61,14 +61,14 @@ This is where Elson stops being “just dictation”. Agent mode can look at wha
 
 ### Follow-up chat and feedback loop
 
-The History view proves the output is not disposable. Transcript runs and agent runs are saved locally, can be reopened, and can be continued. That matters if you want a real Wispr Flow alternative or Willow Voice alternative instead of a one-shot voice box with no memory.
+The follow-up loop matters because Elson is not “speak once and pray.” If it gets something wrong, you follow up in chat, correct it, and keep going. That is a much better product loop than one-shot transcription with no iteration.
 
 <p align="center">
-  <img width="820" alt="Elson history view on macOS for reopening transcript and agent runs" src="./assets/readme/history-view.png" />
+  <img width="820" alt="Elson follow-up chat on macOS for correcting transcript and agent outputs in context" src="./assets/readme/agent-mode.png" />
 </p>
 
 <p align="center">
-  <sub>Local history makes outputs reusable, reviewable, and easy to continue instead of disappearing after one interaction.</sub>
+  <sub>Follow up, refine the result, and keep the interaction going instead of starting from zero every time.</sub>
 </p>
 
 ### Skills: connect Elson to real workflows
@@ -109,14 +109,14 @@ This is one of the strongest reasons Elson feels like a real macOS product inste
 
 ### History: your outputs are not disposable
 
-The follow-up loop matters because Elson is not “speak once and pray.” If it gets something wrong, you follow up in chat, correct it, and keep going. That is a much better product loop than one-shot transcription with no iteration.
+The History view proves the output is not disposable. Transcript runs and agent runs are saved locally, can be reopened, and can be continued. That matters if you want a real Wispr Flow alternative or Willow Voice alternative instead of a one-shot voice box with no memory.
 
 <p align="center">
-  <img width="820" alt="Elson follow-up chat on macOS for correcting transcript and agent outputs in context" src="./assets/readme/agent-mode.png" />
+  <img width="820" alt="Elson history view on macOS for reopening transcript and agent runs" src="./assets/readme/history-view.png" />
 </p>
 
 <p align="center">
-  <sub>Follow up, refine the result, and keep the interaction going instead of starting from zero every time.</sub>
+  <sub>Local history makes outputs reusable, reviewable, and easy to continue instead of disappearing after one interaction.</sub>
 </p>
 
 ### Elson.md memory: customization and persistence
