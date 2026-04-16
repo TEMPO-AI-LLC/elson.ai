@@ -1,0 +1,13 @@
+- Reinstalls of Elson must always do a full TCC reset, not just copy a new `.app` into `/Applications`.
+- Stop `Elson`, unregister old app bundles from LaunchServices, and remove copies from `/Applications` and `~/Applications` first.
+- Install/register the fresh `Elson.app` before calling `tccutil`, because `tccutil` only resets a bundle id that macOS can currently resolve.
+- Reset `All`, `ScreenCapture`, `Microphone`, `Accessibility`, `SystemPolicyDocumentsFolder`, `SystemPolicyDesktopFolder`, `SystemPolicyDownloadsFolder`, and `SystemPolicyAllFiles` for `ai.elson.desktop`.
+- App release versions must monotonically increase; bump `CFBundleShortVersionString` and `CFBundleVersion` before rebuild/install.
+- `./build.sh` is the canonical rebuild path: it must clean installed Elson app/state plus `~/Documents/Elson/Config/local-config.json`, reset TCC, install/open the fresh app, and preserve repo `.env.local`; never copy `.env.local` values into app config.
+- `./update.sh` is the preserve-state update path: it must replace the installed app, reset TCC, and keep local config, API keys, history, and local app state.
+- `update` always means preserve local config. `rebuild` / `build.sh` always means full reset.
+- Only open Elson after that reset sequence; if System Settings is already open, close and reopen the Privacy pane to avoid stale cached UI.
+- Possible folder/TCC issue: Elson is sandboxed, so security-scoped bookmarks can bypass the normal Documents TCC prompt entirely.
+- Never use raw workspace paths for onboarding or transcript export; keep all workspace file access behind `withSelectedWorkspaceFolderAccess()`.
+- Keep descriptions and helper copy minimal; omit them unless they prevent confusion.
+- Always commit before prompt edits, and every prompt edit must be followed by at least one eval run against the CSV-backed intent cases so routing changes stay comparable.

@@ -1,0 +1,82 @@
+{
+  "groq": {
+    "validation": "openai/gpt-oss-20b",
+    "transcription": "whisper-large-v3-turbo",
+    "enhancement": "openai/gpt-oss-120b",
+    "vision": "meta-llama/llama-4-scout-17b-16e-instruct"
+  },
+  "google": {
+    "validation": "gemini-3.1-flash-lite-preview",
+    "transcription": "gemini-3.1-flash-lite-preview",
+    "enhancement": "gemini-3.1-flash-lite-preview",
+    "vision": "gemini-3.1-flash-lite-preview"
+  },
+  "cerebras": {
+    "classification": "zai-glm-4.7",
+    "enhancement": "gpt-oss-120b",
+    "working": "zai-glm-4.7"
+  },
+  "local_runtime": {
+    "groq": {
+      "transcription": {
+        "model": "whisper-large-v3-turbo"
+      },
+      "ocr": {
+        "model": "meta-llama/llama-4-scout-17b-16e-instruct",
+        "temperature": 0.1,
+        "top_p": 1
+      },
+      "validation": {
+        "model": "openai/gpt-oss-20b",
+        "temperature": 0,
+        "top_p": 1
+      }
+    },
+    "google": {
+      "validation": {
+        "model": "gemini-3.1-flash-lite-preview"
+      },
+      "intent_agent": {
+        "model": "gemini-3.1-flash-lite-preview",
+        "temperature": 0,
+        "top_p": 0.95,
+        "top_k": 40,
+        "thinking_level": "low"
+      },
+      "transcript_agent": {
+        "model": "gemini-3.1-flash-lite-preview",
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "top_k": 40,
+        "thinking_level": "low"
+      },
+      "working_agent": {
+        "model": "gemini-3.1-flash-lite-preview",
+        "temperature": 0.1,
+        "top_p": 0.95,
+        "top_k": 40,
+        "thinking_level": "medium"
+      }
+    },
+    "cerebras": {
+      "validation": {
+        "model": "zai-glm-4.7",
+        "temperature": 0,
+        "top_p": 1
+      },
+      "intent_agent": {
+        "model": "zai-glm-4.7",
+        "temperature": 0,
+        "thinking_level": "none"
+      },
+      "transcript_agent": {
+        "model": "gpt-oss-120b",
+        "temperature": 0.5
+      },
+      "working_agent": {
+        "model": "zai-glm-4.7",
+        "temperature": 0.1
+      }
+    }
+  }
+}

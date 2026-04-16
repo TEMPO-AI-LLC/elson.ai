@@ -1,0 +1,12 @@
+{
+  "groq_api_key": "",
+  "cerebras_api_key": "",
+  "gemini_api_key": "",
+  "my_elson_markdown": "",
+  "agent_mode_enabled": false,
+  "auto_paste": true,
+  "listening_mode": "hold",
+  "transcript_shortcut": "fn",
+  "agent_shortcut": "shift+fn",
+  "runtime_mode": "local"
+}
