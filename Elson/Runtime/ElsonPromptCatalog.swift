@@ -1,13 +1,6 @@
 import Foundation
 
 enum ElsonPromptCatalog {
-    static var defaultIntentAgentPrompt: String {
-        PromptConfig.shared.string(
-            "default_intent_agent_prompt",
-            replacements: sharedPromptReplacements()
-        )
-    }
-
     static var defaultWorkingAgentPrompt: String {
         PromptConfig.shared.string(
             "default_working_agent_prompt",
@@ -38,12 +31,6 @@ enum ElsonPromptCatalog {
         PromptConfig.shared.string("chat_history_developer_prompt")
     }
 
-    static func normalizedIntentAgentPrompt(_ value: String) -> String {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return defaultIntentAgentPrompt }
-        return trimmed
-    }
-
     static func normalizedWorkingAgentPrompt(_ value: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return defaultWorkingAgentPrompt }
@@ -68,76 +55,31 @@ enum ElsonPromptCatalog {
         return glossary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "None" : glossary
     }
 
-    static func screenExtractorSystemPrompt(intentAgentPrompt: String, wordsGlossaryMarkdown: String) -> String {
-        taskSystemPrompt(
-            basePrompt: intentAgentPrompt,
-            taskInstructions: PromptConfig.shared.string(
+    private static var screenExtractorBasePrompt: String {
+        """
+        You extract OCR-style text and a concise scene description from current-turn screenshots.
+
+        Use the Words glossary only to disambiguate visible names, brands, products, people, organizations, domains, file names, and UI labels when the image evidence supports that canonical form.
+        Do not invent text that is not visible.
+        Return only the requested JSON fields.
+        """
+    }
+
+    static func screenExtractorSystemPrompt(wordsGlossaryMarkdown: String) -> String {
+        [
+            screenExtractorBasePrompt.trimmingCharacters(in: .whitespacesAndNewlines),
+            PromptConfig.shared.string(
                 "screen_extractor_task",
                 replacements: [
                     "words_glossary": nonEmptyOrPlaceholder(wordsGlossaryMarkdown)
                 ]
-            ),
-            includeConversationHistory: false
-        )
+            ).trimmingCharacters(in: .whitespacesAndNewlines)
+        ]
+        .joined(separator: "\n\n")
     }
 
     static func screenExtractorUserPrompt() -> String {
         "Extract OCR-style text and a concise scene description from these current-turn screenshots."
-    }
-
-    static func intentAgentSystemPrompt(
-        intentAgentPrompt: String,
-        includeConversationHistory: Bool
-    ) -> String {
-        taskSystemPrompt(
-            basePrompt: intentAgentPrompt,
-            taskInstructions: PromptConfig.shared.string(
-                "intent_agent_task",
-                replacements: [
-                    "working_agent_capability_contract": workingAgentCapabilityContract
-                ]
-            ),
-            includeConversationHistory: includeConversationHistory
-        )
-    }
-
-    static func intentAgentUserPrompt(
-        envelope: ElsonRequestEnvelope,
-        attachmentSummary: String,
-        fullAgentAllowed: Bool
-    ) -> String {
-        """
-        mode_hint: \(envelope.modeHint)
-        full_agent_allowed: \(fullAgentAllowed ? "true" : "false")
-        surface: \(envelope.surface)
-        input_source: \(envelope.inputSource)
-        transcript_snippet_count: \(envelope.transcriptSnippetCount.map { String($0) } ?? "None")
-
-        frontmost_app_name: \(nonEmptyOrPlaceholder(envelope.appContext.frontmostAppName))
-        frontmost_app_bundle_id: \(nonEmptyOrPlaceholder(envelope.appContext.frontmostAppBundleId))
-        frontmost_window_title: \(nonEmptyOrPlaceholder(envelope.appContext.frontmostWindowTitle))
-
-        continuation_context:
-        \(continuationContextText(envelope.continuationContext))
-
-        words_glossary:
-        \(wordsGlossaryText(from: envelope.myElsonMarkdown))
-
-        clipboard_text:
-        \(nonEmptyOrPlaceholder(envelope.clipboardText))
-
-        screen_text:
-        \(nonEmptyOrPlaceholder(envelope.screenContext.screenText))
-
-        screen_description:
-        \(nonEmptyOrPlaceholder(envelope.screenContext.screenDescription))
-
-        attachments:
-        \(attachmentSummary)
-
-        raw_transcript:
-        \(nonEmptyOrPlaceholder(envelope.rawTranscript))
-        """
     }
 
     static func transcriptAgentSystemPrompt(
@@ -184,7 +126,7 @@ enum ElsonPromptCatalog {
     }
 
     static func localFormattingSystemPrompt(
-        intentAgentPrompt: String,
+        transcriptAgentPrompt: String,
         mode: String,
         extraContextMarkdown: String,
         includeConversationHistory: Bool
@@ -222,7 +164,7 @@ enum ElsonPromptCatalog {
             """
 
         return taskSystemPrompt(
-            basePrompt: intentAgentPrompt,
+            basePrompt: transcriptAgentPrompt,
             taskInstructions: taskInstructions,
             includeConversationHistory: includeConversationHistory
         )

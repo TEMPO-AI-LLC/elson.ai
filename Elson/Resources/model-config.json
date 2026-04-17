@@ -36,13 +36,6 @@
       "validation": {
         "model": "gemini-3.1-flash-lite-preview"
       },
-      "intent_agent": {
-        "model": "gemini-3.1-flash-lite-preview",
-        "temperature": 0,
-        "top_p": 0.95,
-        "top_k": 40,
-        "thinking_level": "low"
-      },
       "transcript_agent": {
         "model": "gemini-3.1-flash-lite-preview",
         "temperature": 0.2,
@@ -63,11 +56,6 @@
         "model": "zai-glm-4.7",
         "temperature": 0,
         "top_p": 1
-      },
-      "intent_agent": {
-        "model": "zai-glm-4.7",
-        "temperature": 0,
-        "thinking_level": "none"
       },
       "transcript_agent": {
         "model": "gpt-oss-120b",

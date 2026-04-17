@@ -77,18 +77,15 @@ final class AppSettings {
         static let skillSelectionScope = "skill_selection_scope"
         static let selectedSkillIDs = "selected_skill_ids"
         static let myElsonMarkdown = "my_elson_markdown"
-        static let intentAgentPrompt = "intent_agent_prompt"
-        static let transcriptAgentPrompt = "transcript_agent_prompt"
-        static let workingAgentPrompt = "working_agent_prompt"
+        static let transcriptAgentPrompt = "transcript_agent_prompt_v2"
+        static let workingAgentPrompt = "working_agent_prompt_v2"
         static let masterSystemPrompt = "master_system_prompt"
         static let legacyAgentSystemPrompt = "agent_system_prompt"
         static let legacyOpenClawBaseURL = "openclaw_base_url"
         static let runtimeMode = "runtime_mode"
-        static let audioDeciderProvider = "audio_decider_provider"
         static let agentProvider = "agent_provider"
     }
 
-    private static let fixedTranscriptProvider: LocalModelProvider = .cerebras
     private static let fixedAgentProvider: LocalModelProvider = .google
 
     var didCompleteOnboarding: Bool = false {
@@ -277,13 +274,6 @@ final class AppSettings {
         }
     }
 
-    var intentAgentPrompt: String = ElsonPromptCatalog.defaultIntentAgentPrompt {
-        didSet {
-            UserDefaults.standard.set(intentAgentPrompt, forKey: Keys.intentAgentPrompt)
-            persistLocalConfig()
-        }
-    }
-
     var transcriptAgentPrompt: String = ElsonPromptCatalog.defaultTranscriptAgentPrompt {
         didSet {
             UserDefaults.standard.set(transcriptAgentPrompt, forKey: Keys.transcriptAgentPrompt)
@@ -315,13 +305,6 @@ final class AppSettings {
     var geminiAPIKey: String = "" {
         didSet {
             guard !isHydratingMyElsonState else { return }
-            persistLocalConfig()
-        }
-    }
-
-    var audioDeciderProvider: LocalModelProvider = .cerebras {
-        didSet {
-            UserDefaults.standard.set(audioDeciderProvider.rawValue, forKey: Keys.audioDeciderProvider)
             persistLocalConfig()
         }
     }
@@ -424,10 +407,8 @@ final class AppSettings {
             groqAPIKey: groqAPIKey,
             cerebrasAPIKey: cerebrasAPIKey,
             geminiAPIKey: geminiAPIKey,
-            audioDeciderProvider: Self.fixedTranscriptProvider,
             agentProvider: Self.fixedAgentProvider,
             myElsonMarkdown: myElsonMarkdown,
-            intentAgentPrompt: intentAgentPrompt,
             transcriptAgentPrompt: transcriptAgentPrompt,
             workingAgentPrompt: workingAgentPrompt,
             agentModeEnabled: true,
@@ -456,10 +437,6 @@ final class AppSettings {
         )
     }
 
-    func resetIntentAgentPrompt() {
-        intentAgentPrompt = ElsonPromptCatalog.defaultIntentAgentPrompt
-    }
-
     func resetTranscriptAgentPrompt() {
         transcriptAgentPrompt = ElsonPromptCatalog.defaultTranscriptAgentPrompt
     }
@@ -469,7 +446,6 @@ final class AppSettings {
     }
 
     func resetMasterSystemPrompt() {
-        resetIntentAgentPrompt()
         resetTranscriptAgentPrompt()
         resetWorkingAgentPrompt()
     }
@@ -837,10 +813,6 @@ final class AppSettings {
            !imported.myElsonMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             myElsonMarkdown = imported.myElsonMarkdown
         }
-        if intentAgentPrompt == ElsonPromptCatalog.defaultIntentAgentPrompt,
-           imported.intentAgentPrompt != ElsonPromptCatalog.defaultIntentAgentPrompt {
-            intentAgentPrompt = imported.intentAgentPrompt
-        }
         if transcriptAgentPrompt == ElsonPromptCatalog.defaultTranscriptAgentPrompt,
            imported.transcriptAgentPrompt != ElsonPromptCatalog.defaultTranscriptAgentPrompt {
             transcriptAgentPrompt = imported.transcriptAgentPrompt
@@ -922,10 +894,8 @@ final class AppSettings {
         skillsEnabled = false
         skillSelectionScope = .all
         selectedSkillIDs = []
-        audioDeciderProvider = Self.fixedTranscriptProvider
         agentProvider = Self.fixedAgentProvider
         myElsonMarkdown = ""
-        intentAgentPrompt = ElsonPromptCatalog.defaultIntentAgentPrompt
         transcriptAgentPrompt = ElsonPromptCatalog.defaultTranscriptAgentPrompt
         workingAgentPrompt = ElsonPromptCatalog.defaultWorkingAgentPrompt
         pendingScreenshotJPEGData = []
@@ -963,14 +933,12 @@ final class AppSettings {
         UserDefaults.standard.removeObject(forKey: Keys.skillSelectionScope)
         UserDefaults.standard.removeObject(forKey: Keys.selectedSkillIDs)
         UserDefaults.standard.removeObject(forKey: Keys.myElsonMarkdown)
-        UserDefaults.standard.removeObject(forKey: Keys.intentAgentPrompt)
         UserDefaults.standard.removeObject(forKey: Keys.transcriptAgentPrompt)
         UserDefaults.standard.removeObject(forKey: Keys.workingAgentPrompt)
         UserDefaults.standard.removeObject(forKey: Keys.masterSystemPrompt)
         UserDefaults.standard.removeObject(forKey: Keys.legacyAgentSystemPrompt)
         UserDefaults.standard.removeObject(forKey: Keys.legacyOpenClawBaseURL)
         UserDefaults.standard.removeObject(forKey: Keys.runtimeMode)
-        UserDefaults.standard.removeObject(forKey: Keys.audioDeciderProvider)
         UserDefaults.standard.removeObject(forKey: Keys.agentProvider)
         ElsonLocalConfigStore.shared.clearSelectedWorkspaceFolder()
         ElsonLocalConfigStore.shared.save(.default)
@@ -1008,9 +976,6 @@ final class AppSettings {
         print("[SETTINGS] workspaceConfig: \(workspaceConfig == nil ? "NIL (no bookmark)" : "groq=\(workspaceConfig!.groqAPIKey.isEmpty ? "EMPTY" : "SET") cerebras=\(workspaceConfig!.cerebrasAPIKey.isEmpty ? "EMPTY" : "SET") gemini=\(workspaceConfig!.geminiAPIKey.isEmpty ? "EMPTY" : "SET")")")
         let migrationConfig = ElsonLocalConfigStore.shared.loadExternalApplicationSupportMigrationConfig()
         print("[SETTINGS] migrationConfig: \(migrationConfig == nil ? "NIL" : "groq=\(migrationConfig!.groqAPIKey.isEmpty ? "EMPTY" : "SET")")")
-        let legacyPrompt =
-            UserDefaults.standard.string(forKey: Keys.masterSystemPrompt)
-            ?? ElsonPromptCatalog.migratedPriorAgentPrompt(UserDefaults.standard.string(forKey: Keys.legacyAgentSystemPrompt))
         let completedOnboardingAppVersion = UserDefaults.standard.string(forKey: Keys.completedOnboardingAppVersion)
         let storedDidCompleteOnboarding = UserDefaults.standard.object(forKey: Keys.didCompleteOnboarding) as? Bool ?? false
         print("[SETTINGS] currentAppVersion=\(Self.currentAppVersion) storedVersion=\(completedOnboardingAppVersion ?? "nil") storedOnboarding=\(storedDidCompleteOnboarding)")
@@ -1062,21 +1027,13 @@ final class AppSettings {
             (UserDefaults.standard.array(forKey: Keys.selectedSkillIDs) as? [String])
                 ?? storedConfig.selectedSkillIDs
         )
-        audioDeciderProvider = Self.fixedTranscriptProvider
         agentProvider = Self.fixedAgentProvider
         let defaultMyElsonMarkdown = MyElsonDocument.normalizedMarkdown(from: "")
         let storedMyElsonMarkdown = UserDefaults.standard.string(forKey: Keys.myElsonMarkdown)
         myElsonMarkdown = storedMyElsonMarkdown ?? storedConfig.myElsonMarkdown
-        let wsIntent = workspaceConfig?.intentAgentPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? workspaceConfig?.intentAgentPrompt : nil
         let wsTranscript = workspaceConfig?.transcriptAgentPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? workspaceConfig?.transcriptAgentPrompt : nil
         let wsWorking = workspaceConfig?.workingAgentPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? workspaceConfig?.workingAgentPrompt : nil
 
-        intentAgentPrompt = ElsonPromptCatalog.normalizedIntentAgentPrompt(
-            UserDefaults.standard.string(forKey: Keys.intentAgentPrompt)
-                ?? wsIntent
-                ?? legacyPrompt
-                ?? storedConfig.intentAgentPrompt
-        )
         transcriptAgentPrompt = ElsonPromptCatalog.normalizedTranscriptAgentPrompt(
             UserDefaults.standard.string(forKey: Keys.transcriptAgentPrompt)
                 ?? wsTranscript
@@ -1085,7 +1042,6 @@ final class AppSettings {
         workingAgentPrompt = ElsonPromptCatalog.normalizedWorkingAgentPrompt(
             UserDefaults.standard.string(forKey: Keys.workingAgentPrompt)
                 ?? wsWorking
-                ?? legacyPrompt
                 ?? storedConfig.workingAgentPrompt
         )
         groqAPIKey = firstNonEmptySecret(storedConfig.groqAPIKey, migrationConfig?.groqAPIKey, workspaceConfig?.groqAPIKey) ?? ""
@@ -1255,7 +1211,7 @@ final class AppSettings {
                 rawTranscript: entry.rawTranscript,
                 source: entry.source,
                 replyMode: entry.replyMode,
-                provider: Self.fixedTranscriptProvider,
+                provider: .cerebras,
                 cerebrasAPIKey: config.cerebrasAPIKey,
                 geminiAPIKey: config.geminiAPIKey
             )

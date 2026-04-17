@@ -143,10 +143,8 @@ struct ElsonLocalConfig: Codable, Equatable {
     var groqAPIKey: String
     var cerebrasAPIKey: String
     var geminiAPIKey: String
-    var audioDeciderProvider: LocalModelProvider
     var agentProvider: LocalModelProvider
     var myElsonMarkdown: String
-    var intentAgentPrompt: String
     var transcriptAgentPrompt: String
     var workingAgentPrompt: String
     var agentModeEnabled: Bool
@@ -169,12 +167,10 @@ struct ElsonLocalConfig: Codable, Equatable {
         case groqAPIKey = "groq_api_key"
         case cerebrasAPIKey = "cerebras_api_key"
         case geminiAPIKey = "gemini_api_key"
-        case audioDeciderProvider = "audio_decider_provider"
         case agentProvider = "agent_provider"
         case myElsonMarkdown = "my_elson_markdown"
-        case intentAgentPrompt = "intent_agent_prompt"
-        case transcriptAgentPrompt = "transcript_agent_prompt"
-        case workingAgentPrompt = "working_agent_prompt"
+        case transcriptAgentPrompt = "transcript_agent_prompt_v2"
+        case workingAgentPrompt = "working_agent_prompt_v2"
         case agentModeEnabled = "agent_mode_enabled"
         case skillsEnabled = "skills_enabled"
         case skillSelectionScope = "skill_selection_scope"
@@ -196,10 +192,8 @@ struct ElsonLocalConfig: Codable, Equatable {
         groqAPIKey: "",
         cerebrasAPIKey: "",
         geminiAPIKey: "",
-        audioDeciderProvider: .cerebras,
         agentProvider: .google,
         myElsonMarkdown: "",
-        intentAgentPrompt: ElsonPromptCatalog.defaultIntentAgentPrompt,
         transcriptAgentPrompt: ElsonPromptCatalog.defaultTranscriptAgentPrompt,
         workingAgentPrompt: ElsonPromptCatalog.defaultWorkingAgentPrompt,
         agentModeEnabled: true,
@@ -223,10 +217,8 @@ struct ElsonLocalConfig: Codable, Equatable {
         groqAPIKey: String,
         cerebrasAPIKey: String,
         geminiAPIKey: String,
-        audioDeciderProvider: LocalModelProvider,
         agentProvider: LocalModelProvider,
         myElsonMarkdown: String,
-        intentAgentPrompt: String,
         transcriptAgentPrompt: String,
         workingAgentPrompt: String,
         agentModeEnabled: Bool,
@@ -248,10 +240,8 @@ struct ElsonLocalConfig: Codable, Equatable {
         self.groqAPIKey = Self.sanitizeSecret(groqAPIKey)
         self.cerebrasAPIKey = Self.sanitizeSecret(cerebrasAPIKey)
         self.geminiAPIKey = Self.sanitizeSecret(geminiAPIKey)
-        self.audioDeciderProvider = audioDeciderProvider
         self.agentProvider = agentProvider
         self.myElsonMarkdown = myElsonMarkdown
-        self.intentAgentPrompt = ElsonPromptCatalog.normalizedIntentAgentPrompt(intentAgentPrompt)
         self.transcriptAgentPrompt = ElsonPromptCatalog.normalizedTranscriptAgentPrompt(transcriptAgentPrompt)
         self.workingAgentPrompt = ElsonPromptCatalog.normalizedWorkingAgentPrompt(workingAgentPrompt)
         self.agentModeEnabled = agentModeEnabled
@@ -273,30 +263,19 @@ struct ElsonLocalConfig: Codable, Equatable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let legacyContainer = try decoder.container(keyedBy: LegacyCodingKeys.self)
         let fallback = ElsonLocalConfig.default
 
         groqAPIKey = Self.sanitizeSecret(try container.decodeIfPresent(String.self, forKey: .groqAPIKey) ?? fallback.groqAPIKey)
         cerebrasAPIKey = Self.sanitizeSecret(try container.decodeIfPresent(String.self, forKey: .cerebrasAPIKey) ?? fallback.cerebrasAPIKey)
         geminiAPIKey = Self.sanitizeSecret(try container.decodeIfPresent(String.self, forKey: .geminiAPIKey) ?? fallback.geminiAPIKey)
-        audioDeciderProvider = try container.decodeIfPresent(LocalModelProvider.self, forKey: .audioDeciderProvider) ?? fallback.audioDeciderProvider
         agentProvider = try container.decodeIfPresent(LocalModelProvider.self, forKey: .agentProvider) ?? fallback.agentProvider
         myElsonMarkdown = try container.decodeIfPresent(String.self, forKey: .myElsonMarkdown) ?? fallback.myElsonMarkdown
-        let legacyPrompt =
-            try legacyContainer.decodeIfPresent(String.self, forKey: .masterSystemPrompt)
-            ?? ElsonPromptCatalog.migratedPriorAgentPrompt(try legacyContainer.decodeIfPresent(String.self, forKey: .agentSystemPrompt))
-        intentAgentPrompt = ElsonPromptCatalog.normalizedIntentAgentPrompt(
-            try container.decodeIfPresent(String.self, forKey: .intentAgentPrompt)
-                ?? legacyPrompt
-                ?? fallback.intentAgentPrompt
-        )
         transcriptAgentPrompt = ElsonPromptCatalog.normalizedTranscriptAgentPrompt(
             try container.decodeIfPresent(String.self, forKey: .transcriptAgentPrompt)
                 ?? fallback.transcriptAgentPrompt
         )
         workingAgentPrompt = ElsonPromptCatalog.normalizedWorkingAgentPrompt(
             try container.decodeIfPresent(String.self, forKey: .workingAgentPrompt)
-                ?? legacyPrompt
                 ?? fallback.workingAgentPrompt
         )
         agentModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .agentModeEnabled) ?? fallback.agentModeEnabled
@@ -320,11 +299,6 @@ struct ElsonLocalConfig: Codable, Equatable {
         runtimeMode = try container.decodeIfPresent(RuntimeMode.self, forKey: .runtimeMode) ?? fallback.runtimeMode
         feedbackShortcutEnabled = try container.decodeIfPresent(Bool.self, forKey: .feedbackShortcutEnabled) ?? fallback.feedbackShortcutEnabled
         feedbackShortcut = try container.decodeIfPresent(RecordingShortcut.self, forKey: .feedbackShortcut) ?? fallback.feedbackShortcut
-    }
-
-    private enum LegacyCodingKeys: String, CodingKey {
-        case agentSystemPrompt
-        case masterSystemPrompt
     }
 
     private static func sanitizeSecret(_ value: String) -> String {

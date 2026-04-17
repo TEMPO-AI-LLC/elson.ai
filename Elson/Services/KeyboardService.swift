@@ -510,7 +510,7 @@ final class KeyboardService {
                     if let prefetched = await shortcutScreenContextPrefetchTask?.value {
                         return (screenshotData, prefetched)
                     }
-                    let prefetched = try await ElsonRuntime.shared.prefetchAudioDeciderScreenContext(
+                    let prefetched = try await ElsonRuntime.shared.prefetchShortcutScreenContext(
                         requestId: requestId,
                         surface: "shortcut",
                         threadId: threadId,
@@ -797,7 +797,7 @@ final class KeyboardService {
 
         shortcutScreenContextPrefetchTask = Task {
             do {
-                return try await ElsonRuntime.shared.prefetchAudioDeciderScreenContext(
+                return try await ElsonRuntime.shared.prefetchShortcutScreenContext(
                     requestId: requestId,
                     surface: "shortcut",
                     threadId: threadId,

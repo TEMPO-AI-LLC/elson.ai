@@ -1,8 +1,14 @@
-# Elson Intent Evals
+# Elson Legacy Evals
 
-Python package for replaying **Intent Agent** decisions only.
+Legacy Python package from the old **Intent Agent** routing architecture.
 
-It does three things:
+This harness is currently **retired** for product-quality decisions. Elson now needs dedicated regression coverage for:
+
+- Transcript mode
+- Working Agent mode
+- explicit shortcut-driven behavior
+
+Historically it did three things:
 
 1. harvest cases from existing local artifacts
 2. replay them against the current provider with **2 direct API calls per case by default**
@@ -11,6 +17,8 @@ It does three things:
 Important:
 
 - This package does **not** run the Working Agent.
+- This package does **not** reflect the current two-shortcut architecture cleanly.
+- Keep it only as legacy reference material until transcript/working eval lanes replace it.
 - Gemini replay uses the **real screenshot/image files** when fixture bundles contain them.
 - Fixture retention is infinite by default.
 - Manual cleanup is available through `purge --days N`.

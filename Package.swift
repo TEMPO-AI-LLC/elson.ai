@@ -89,7 +89,6 @@ let package = Package(
                 "Runtime/ElsonLocalConfig.swift",
                 "Runtime/ElsonRuntime.swift",
                 "Runtime/GroqTranscriptionSanitizer.swift",
-                "Runtime/IntentEvalFixtureStore.swift",
                 "Runtime/LocalAIService.swift",
                 "Runtime/LocalDirectTransport.swift",
                 "Runtime/MyElsonMemory.swift",

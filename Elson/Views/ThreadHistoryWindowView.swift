@@ -460,7 +460,7 @@ struct ThreadHistoryWindowView: View {
                     }
 
                     let screenContextTask = Task {
-                        try await ElsonRuntime.shared.prefetchAudioDeciderScreenContext(
+                        try await ElsonRuntime.shared.prefetchShortcutScreenContext(
                             requestId: requestId,
                             surface: "chat",
                             threadId: threadId,

@@ -6,7 +6,6 @@ enum RequestTimelineStage: String, CaseIterable, Sendable {
     case audioCaptureFinalize = "audio_capture_finalize"
     case groqTranscription = "groq_transcription"
     case screenContext = "screen_context"
-    case intentAgent = "intent_agent"
     case speculativeTranscript = "speculative_transcript"
     case workingAgent = "working_agent"
     case localTranscript = "local_transcript"

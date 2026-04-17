@@ -145,7 +145,6 @@ struct ElsonRequestEnvelope: Codable, Hashable, Sendable {
     let enhancedTranscript: String
     let transcriptSnippetCount: Int?
     let myElsonMarkdown: String
-    let intentAgentPrompt: String
     let transcriptAgentPrompt: String
     let workingAgentPrompt: String
     let selectionNote: String?
@@ -169,7 +168,6 @@ struct ElsonRequestEnvelope: Codable, Hashable, Sendable {
         case enhancedTranscript = "enhanced_transcript"
         case transcriptSnippetCount = "transcript_snippet_count"
         case myElsonMarkdown = "my_elson_markdown"
-        case intentAgentPrompt = "intent_agent_prompt"
         case transcriptAgentPrompt = "transcript_agent_prompt"
         case workingAgentPrompt = "working_agent_prompt"
         case selectionNote = "selection_note"
@@ -394,14 +392,6 @@ struct AgentExecutionResult: Hashable, Sendable {
     let actions: [ElsonAction]
 }
 
-struct AudioIntentDecisionResult: Hashable, Sendable {
-    let route: AudioDeciderRoute
-    let reason: String
-    let threadDecision: AudioDeciderThreadDecision
-    let replyRelation: AudioDeciderReplyRelation
-    let replyConfidence: Double?
-}
-
 struct ElsonResponseEnvelope: Codable, Hashable, Sendable {
     let replyMode: String
     let displayText: String
@@ -450,7 +440,6 @@ struct PostResponseCorrectionSeed: Hashable, Sendable {
                 enhancedTranscript: request.enhancedTranscript,
                 transcriptSnippetCount: request.transcriptSnippetCount,
                 myElsonMarkdown: markdown,
-                intentAgentPrompt: request.intentAgentPrompt,
                 transcriptAgentPrompt: request.transcriptAgentPrompt,
                 workingAgentPrompt: request.workingAgentPrompt,
                 selectionNote: request.selectionNote,

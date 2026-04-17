@@ -213,31 +213,6 @@ struct ElsonSettingsView: View {
                     )
 
                 HStack {
-                    Text("Intent Agent Prompt")
-                        .font(.system(size: 13, weight: .semibold))
-                    Spacer()
-                    Button("Reset") {
-                        appSettings.resetIntentAgentPrompt()
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-
-                Text("Base rules for routing, reply detection, and new-thread decisions.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-
-                TextEditor(text: $appSettings.intentAgentPrompt)
-                    .font(.system(size: 14))
-                    .scrollContentBackground(.hidden)
-                    .frame(minHeight: 220)
-                    .padding(12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(Color.primary.opacity(0.04))
-                    )
-
-                HStack {
                     Text("Transcript Agent Prompt")
                         .font(.system(size: 13, weight: .semibold))
                     Spacer()

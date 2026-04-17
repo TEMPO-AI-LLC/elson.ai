@@ -220,7 +220,7 @@ This repo already contains three substantial layers:
 
 - Python package under [`evals_python`](./evals_python)
 - fixture harvesting
-- Intent Agent replay runs
+- legacy eval replay tooling
 - JSON / CSV / Markdown reporting
 - shared prompt source of truth through [`Elson/Resources/prompt-config.json`](./Elson/Resources/prompt-config.json)
 
@@ -389,7 +389,7 @@ Instead, people evaluate Elson as a **Wispr Flow alternative**, **Wispr.ai alter
 - **screenshot-aware assistance**, not just dictation
 - **local thread history, prompts, logs, and memory**
 - **build, packaging, installer, and update flows in the repo**
-- **public eval harness** for Intent Agent replay testing
+- **public legacy eval harness** plus room to add transcript/working regression lanes
 - **paste-first control** instead of silent auto-send behavior
 
 If you are explicitly searching for an **open-source Wispr Flow alternative** or an **open-source Willow Voice alternative**, the precise wording here matters:
@@ -760,7 +760,7 @@ The checked-in config and runtime paths reference:
 At a high level:
 
 - speech transcription is wired through Groq in the main audio flow
-- local runtime model config defines intent, transcript, working-agent, OCR, and validation stages
+- local runtime model config defines transcript, working-agent, OCR, and validation stages
 - prompt resources and model resources live in versioned repo files, not hidden remote config
 
 See:
@@ -772,7 +772,6 @@ See:
 
 The app exposes and persists multiple prompt surfaces:
 
-- Intent Agent prompt
 - Transcript Agent prompt
 - Working Agent prompt
 - MyElson memory / markdown context
@@ -795,15 +794,15 @@ The runtime persists and uses:
 
 The public eval harness lives under [`evals_python`](./evals_python).
 
-It is specifically for **Intent Agent** evaluation, not the full Working Agent.
+It currently exists as a **retired legacy harness** from the pre-two-shortcut architecture and does **not** cover the current Transcript + Working Agent model cleanly.
 
-### What the eval harness does
+### What the legacy harness did
 
 1. harvest cases from local artifacts
 2. replay them against the current provider
 3. write JSON, CSV, and Markdown reports
 
-### Important eval details
+### Important legacy details
 
 - default behavior is **2 direct API calls per case**
 - replay can use real screenshot/image files when fixture bundles contain them
@@ -921,7 +920,7 @@ This is the practical map of the repository, grouped by concern instead of dumpe
 
 ### Evals
 
-- [`evals_python`](./evals_python): public Intent Agent eval harness
+- [`evals_python`](./evals_python): legacy public eval harness pending transcript/working replacement
 - [`evals_python/README.md`](./evals_python/README.md): eval usage guide
 - [`evals_python/pyproject.toml`](./evals_python/pyproject.toml): Python package metadata
 
@@ -1006,7 +1005,7 @@ Locally, primarily in:
 
 ### How do I evaluate prompt or routing changes?
 
-Use the public Python harness in [`evals_python`](./evals_python), especially the replay workflow, because it is the repo’s checked-in comparison surface for Intent Agent behavior.
+Use the public Python harness in [`evals_python`](./evals_python) only as a legacy surface today. It still needs a proper replacement for transcript and working-agent regressions.
 
 ## License
 

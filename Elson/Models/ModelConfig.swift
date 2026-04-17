@@ -37,13 +37,11 @@ struct GroqLocalRuntimeModelSet: Codable {
 
 struct GoogleLocalRuntimeModelSet: Codable {
     let validation: ModelStageConfig
-    let intentAgent: ModelStageConfig
     let transcriptAgent: ModelStageConfig
     let workingAgent: ModelStageConfig
 
     enum CodingKeys: String, CodingKey {
         case validation
-        case intentAgent = "intent_agent"
         case transcriptAgent = "transcript_agent"
         case workingAgent = "working_agent"
     }
@@ -51,13 +49,11 @@ struct GoogleLocalRuntimeModelSet: Codable {
 
 struct CerebrasLocalRuntimeModelSet: Codable {
     let validation: ModelStageConfig
-    let intentAgent: ModelStageConfig
     let transcriptAgent: ModelStageConfig
     let workingAgent: ModelStageConfig
 
     enum CodingKeys: String, CodingKey {
         case validation
-        case intentAgent = "intent_agent"
         case transcriptAgent = "transcript_agent"
         case workingAgent = "working_agent"
     }
@@ -311,13 +307,6 @@ final class ModelConfig: @unchecked Sendable {
                     topK: nil,
                     thinkingLevel: nil
                 ),
-                intentAgent: ModelStageConfig(
-                    model: "gemini-3.1-flash-lite-preview",
-                    temperature: 0,
-                    topP: 0.95,
-                    topK: 40,
-                    thinkingLevel: "low"
-                ),
                 transcriptAgent: ModelStageConfig(
                     model: "gemini-3.1-flash-lite-preview",
                     temperature: 0.2,
@@ -340,13 +329,6 @@ final class ModelConfig: @unchecked Sendable {
                     topP: 1,
                     topK: nil,
                     thinkingLevel: nil
-                ),
-                intentAgent: ModelStageConfig(
-                    model: "zai-glm-4.7",
-                    temperature: 0,
-                    topP: nil,
-                    topK: nil,
-                    thinkingLevel: "none"
                 ),
                 transcriptAgent: ModelStageConfig(
                     model: "gpt-oss-120b",

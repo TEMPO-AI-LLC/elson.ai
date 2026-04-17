@@ -87,7 +87,7 @@ final class ElsonRuntime: @unchecked Sendable {
     private func agentProvider() -> LocalModelProvider { .google }
     private func screenContextProvider() -> LocalModelProvider { .cerebras }
 
-    func prefetchAudioDeciderScreenContext(
+    func prefetchShortcutScreenContext(
         requestId: String,
         surface: String,
         threadId: String,
@@ -112,7 +112,7 @@ final class ElsonRuntime: @unchecked Sendable {
         let startedAt = Date()
         let context = try await screenContextForStage(
             provider: screenContextProvider(),
-            stage: "intent_agent",
+            stage: "shortcut_prefetch",
             attachments: requestAttachments,
             requestId: requestId,
             threadId: threadId,
@@ -435,7 +435,6 @@ final class ElsonRuntime: @unchecked Sendable {
                     surface: surface,
                     threadId: threadId,
                     myElsonMarkdown: currentMyElsonMarkdown,
-                    intentAgentPrompt: config.intentAgentPrompt,
                     transcriptAgentPrompt: config.transcriptAgentPrompt,
                     workingAgentPrompt: config.workingAgentPrompt,
                     clipboardText: clipboardText,
@@ -543,7 +542,6 @@ final class ElsonRuntime: @unchecked Sendable {
             surface: "chat",
             threadId: threadId,
             myElsonMarkdown: currentMyElsonMarkdown(from: config),
-            intentAgentPrompt: config.intentAgentPrompt,
             transcriptAgentPrompt: config.transcriptAgentPrompt,
             workingAgentPrompt: config.workingAgentPrompt,
             clipboardText: nil,
@@ -873,7 +871,6 @@ final class ElsonRuntime: @unchecked Sendable {
             surface: surface,
             threadId: threadId,
             myElsonMarkdown: currentMyElsonMarkdown,
-            intentAgentPrompt: config.intentAgentPrompt,
             transcriptAgentPrompt: config.transcriptAgentPrompt,
             workingAgentPrompt: config.workingAgentPrompt,
             clipboardText: clipboardText,
@@ -1005,7 +1002,6 @@ final class ElsonRuntime: @unchecked Sendable {
         surface: String,
         threadId: String,
         myElsonMarkdown: String,
-        intentAgentPrompt: String,
         transcriptAgentPrompt: String,
         workingAgentPrompt: String,
         clipboardText: String?,
@@ -1031,7 +1027,6 @@ final class ElsonRuntime: @unchecked Sendable {
             enhancedTranscript: enhancedTranscript,
             transcriptSnippetCount: snippetCount,
             myElsonMarkdown: myElsonMarkdown,
-            intentAgentPrompt: intentAgentPrompt,
             transcriptAgentPrompt: transcriptAgentPrompt,
             workingAgentPrompt: workingAgentPrompt,
             selectionNote: nil,
@@ -1129,7 +1124,6 @@ final class ElsonRuntime: @unchecked Sendable {
                 let context = try await extractScreenContext(
                     from: attachments,
                     groqAPIKey: config.groqAPIKey,
-                    intentAgentPrompt: config.intentAgentPrompt,
                     myElsonMarkdown: myElsonMarkdown,
                     logContext: LocalRequestLogContext(
                         requestId: requestId,
@@ -1165,7 +1159,6 @@ final class ElsonRuntime: @unchecked Sendable {
     private func extractScreenContext(
         from attachments: [ElsonAttachmentPayload],
         groqAPIKey: String,
-        intentAgentPrompt: String,
         myElsonMarkdown: String,
         logContext: LocalRequestLogContext
     ) async throws -> LocalScreenContext {
@@ -1186,7 +1179,6 @@ final class ElsonRuntime: @unchecked Sendable {
         return try await LocalAIService().extractScreenContext(
             images: images,
             groqAPIKey: groqAPIKey,
-            intentAgentPrompt: intentAgentPrompt,
             myElsonMarkdown: myElsonMarkdown,
             logContext: logContext
         )
@@ -1229,7 +1221,6 @@ final class ElsonRuntime: @unchecked Sendable {
             enhancedTranscript: request.enhancedTranscript,
             transcriptSnippetCount: request.transcriptSnippetCount,
             myElsonMarkdown: MyElsonDocument.wordsGlossaryMarkdown(from: request.myElsonMarkdown),
-            intentAgentPrompt: request.intentAgentPrompt,
             transcriptAgentPrompt: request.transcriptAgentPrompt,
             workingAgentPrompt: request.workingAgentPrompt,
             selectionNote: request.selectionNote,
