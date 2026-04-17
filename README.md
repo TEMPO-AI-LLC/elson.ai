@@ -640,16 +640,18 @@ The shipped distribution docs describe this behavior:
 
 That makes the repo usable for both local builds and externally hosted artifacts.
 
-### GitHub one-liner release contract
+### GitHub one-liner asset contract
 
-The README one-liner installer is designed around **GitHub Releases**.
+The README one-liner installer prefers **GitHub Releases**.
 
-For the command at the top of this README to stay valid, the latest public GitHub Release must upload these assets:
+For the command at the top of this README to work cleanly from GitHub, the latest public GitHub Release should upload these assets:
 
 - `elson-modern-latest.dmg`
 - `elson-compat15-latest.dmg`
 
 The GitHub bootstrap script selects between those two DMGs based on the user’s macOS version, then hands off to the canonical `install.sh`.
+
+If those Release assets are missing, the bootstrap script falls back to the same asset names tracked directly in the repository branch.
 
 ## Configuration and local development
 

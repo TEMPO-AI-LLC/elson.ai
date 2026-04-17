@@ -50,6 +50,11 @@ require_cmd() {
   fi
 }
 
+probe_url() {
+  local url="$1"
+  /usr/bin/curl --fail --silent --show-error --location --range 0-0 --output /dev/null "$url" >/dev/null 2>&1
+}
+
 cleanup() {
   if [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ]; then
     rm -rf "$TMP_DIR"
@@ -113,7 +118,18 @@ require_cmd /usr/bin/awk
 HOST_MACOS_MAJOR="$(detect_host_macos_major_version)"
 ASSET_NAME="$(resolve_asset_name "$HOST_MACOS_MAJOR")"
 INSTALL_SCRIPT_URL="${RAW_BASE_URL}/install.sh"
-APP_URL="${RELEASE_BASE_URL}/${ASSET_NAME}"
+RELEASE_APP_URL="${RELEASE_BASE_URL}/${ASSET_NAME}"
+RAW_APP_URL="${RAW_BASE_URL}/${ASSET_NAME}"
+
+if probe_url "$RELEASE_APP_URL"; then
+  APP_URL="$RELEASE_APP_URL"
+  info "Using GitHub release asset."
+elif probe_url "$RAW_APP_URL"; then
+  APP_URL="$RAW_APP_URL"
+  info "Release asset not found. Falling back to repo-tracked raw asset."
+else
+  fail "Could not resolve ${ASSET_NAME} from GitHub Releases or repo raw files."
+fi
 
 TMP_DIR="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/elson-github-install.XXXXXX")"
 INSTALL_SCRIPT_PATH="${TMP_DIR}/install.sh"
