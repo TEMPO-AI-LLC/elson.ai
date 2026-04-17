@@ -6,7 +6,7 @@ Elson is a local-first macOS voice assistant for ultra-fast dictation, transcrip
 
 If you are looking for an open-source alternative to **Wispr Flow**, **Wispr.ai**, or **Willow Voice** that you can actually inspect, build, run, and customize, Elson is built for exactly that.
 
-<b>Paste this into `Claude`, `Codex`, or any other local agent and enjoy Elson.ai.</b>
+<b>Paste this into `Claude`, `Codex`, or any other local terminal and enjoy Elson.ai.</b>
 
 ## Install
 
