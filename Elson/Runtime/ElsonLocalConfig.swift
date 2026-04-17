@@ -156,6 +156,7 @@ struct ElsonLocalConfig: Codable, Equatable {
     var autoPaste: Bool
     var copyTranscriptToClipboard: Bool
     var restoreOriginalClipboardAfterPaste: Bool
+    var transcriptScreenOCR: Bool
     var listeningMode: ListeningMode
     var transcriptShortcut: RecordingShortcut
     var agentShortcut: RecordingShortcut
@@ -181,6 +182,7 @@ struct ElsonLocalConfig: Codable, Equatable {
         case autoPaste = "auto_paste"
         case copyTranscriptToClipboard = "copy_transcript_to_clipboard"
         case restoreOriginalClipboardAfterPaste = "restore_original_clipboard_after_paste"
+        case transcriptScreenOCR = "transcript_screen_ocr"
         case listeningMode = "listening_mode"
         case transcriptShortcut = "transcript_shortcut"
         case agentShortcut = "agent_shortcut"
@@ -207,6 +209,7 @@ struct ElsonLocalConfig: Codable, Equatable {
         autoPaste: true,
         copyTranscriptToClipboard: false,
         restoreOriginalClipboardAfterPaste: false,
+        transcriptScreenOCR: true,
         listeningMode: .hold,
         transcriptShortcut: .default,
         agentShortcut: .feedbackDefault,
@@ -233,6 +236,7 @@ struct ElsonLocalConfig: Codable, Equatable {
         autoPaste: Bool,
         copyTranscriptToClipboard: Bool,
         restoreOriginalClipboardAfterPaste: Bool,
+        transcriptScreenOCR: Bool,
         listeningMode: ListeningMode,
         transcriptShortcut: RecordingShortcut,
         agentShortcut: RecordingShortcut,
@@ -257,6 +261,7 @@ struct ElsonLocalConfig: Codable, Equatable {
         self.autoPaste = autoPaste
         self.copyTranscriptToClipboard = copyTranscriptToClipboard
         self.restoreOriginalClipboardAfterPaste = restoreOriginalClipboardAfterPaste
+        self.transcriptScreenOCR = transcriptScreenOCR
         self.listeningMode = listeningMode
         self.transcriptShortcut = transcriptShortcut
         self.agentShortcut = agentShortcut
@@ -303,6 +308,7 @@ struct ElsonLocalConfig: Codable, Equatable {
         restoreOriginalClipboardAfterPaste =
             try container.decodeIfPresent(Bool.self, forKey: .restoreOriginalClipboardAfterPaste)
             ?? fallback.restoreOriginalClipboardAfterPaste
+        transcriptScreenOCR = try container.decodeIfPresent(Bool.self, forKey: .transcriptScreenOCR) ?? fallback.transcriptScreenOCR
         listeningMode = try container.decodeIfPresent(ListeningMode.self, forKey: .listeningMode) ?? fallback.listeningMode
         let legacyRecordingShortcut = try container.decodeIfPresent(RecordingShortcut.self, forKey: .recordingShortcut)
             ?? fallback.recordingShortcut

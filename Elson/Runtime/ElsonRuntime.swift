@@ -1091,6 +1091,13 @@ final class ElsonRuntime: @unchecked Sendable {
         myElsonMarkdown: String,
         lazy: Bool
     ) async throws -> LocalScreenContext {
+        if stage == "transcript_agent", !config.transcriptScreenOCR {
+            DebugLog.runtime(
+                "screen_context_stage request_id=\(requestId) thread_id=\(threadId) stage=\(stage) provider=\(provider.rawValue) ocr=disabled_by_setting"
+            )
+            return .none
+        }
+
         let images = attachments.compactMap { attachment -> LocalImageInput? in
             guard attachment.kind == "image" || attachment.mime.lowercased().hasPrefix("image/") else {
                 return nil

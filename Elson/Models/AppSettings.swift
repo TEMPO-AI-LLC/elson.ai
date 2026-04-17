@@ -71,6 +71,7 @@ final class AppSettings {
         static let autoPasteEnabled = "auto_paste_enabled"
         static let copyTranscriptToClipboardEnabled = "copy_transcript_to_clipboard_enabled"
         static let restoreOriginalClipboardAfterPasteEnabled = "restore_original_clipboard_after_paste_enabled"
+        static let transcriptScreenOCREnabled = "transcript_screen_ocr_enabled"
         static let agentModeEnabled = "agent_mode_enabled"
         static let skillsEnabled = "skills_enabled"
         static let skillSelectionScope = "skill_selection_scope"
@@ -224,6 +225,16 @@ final class AppSettings {
             UserDefaults.standard.set(
                 restoreOriginalClipboardAfterPasteEnabled,
                 forKey: Keys.restoreOriginalClipboardAfterPasteEnabled
+            )
+            persistLocalConfig()
+        }
+    }
+
+    var transcriptScreenOCREnabled: Bool = true {
+        didSet {
+            UserDefaults.standard.set(
+                transcriptScreenOCREnabled,
+                forKey: Keys.transcriptScreenOCREnabled
             )
             persistLocalConfig()
         }
@@ -426,6 +437,7 @@ final class AppSettings {
             autoPaste: autoPasteEnabled,
             copyTranscriptToClipboard: copyTranscriptToClipboardEnabled,
             restoreOriginalClipboardAfterPaste: restoreOriginalClipboardAfterPasteEnabled,
+            transcriptScreenOCR: transcriptScreenOCREnabled,
             listeningMode: listeningMode,
             transcriptShortcut: transcriptShortcut,
             agentShortcut: agentShortcut,
@@ -905,6 +917,7 @@ final class AppSettings {
         autoPasteEnabled = true
         copyTranscriptToClipboardEnabled = false
         restoreOriginalClipboardAfterPasteEnabled = false
+        transcriptScreenOCREnabled = true
         agentModeEnabled = true
         skillsEnabled = false
         skillSelectionScope = .all
@@ -944,6 +957,7 @@ final class AppSettings {
         UserDefaults.standard.removeObject(forKey: Keys.autoPasteEnabled)
         UserDefaults.standard.removeObject(forKey: Keys.copyTranscriptToClipboardEnabled)
         UserDefaults.standard.removeObject(forKey: Keys.restoreOriginalClipboardAfterPasteEnabled)
+        UserDefaults.standard.removeObject(forKey: Keys.transcriptScreenOCREnabled)
         UserDefaults.standard.removeObject(forKey: Keys.agentModeEnabled)
         UserDefaults.standard.removeObject(forKey: Keys.skillsEnabled)
         UserDefaults.standard.removeObject(forKey: Keys.skillSelectionScope)
@@ -1035,6 +1049,9 @@ final class AppSettings {
         restoreOriginalClipboardAfterPasteEnabled =
             UserDefaults.standard.object(forKey: Keys.restoreOriginalClipboardAfterPasteEnabled) as? Bool
             ?? storedConfig.restoreOriginalClipboardAfterPaste
+        transcriptScreenOCREnabled =
+            UserDefaults.standard.object(forKey: Keys.transcriptScreenOCREnabled) as? Bool
+            ?? storedConfig.transcriptScreenOCR
         agentModeEnabled = true
         skillsEnabled = UserDefaults.standard.object(forKey: Keys.skillsEnabled) as? Bool ?? storedConfig.skillsEnabled
         skillSelectionScope =

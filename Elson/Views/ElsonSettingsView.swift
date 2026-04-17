@@ -476,6 +476,11 @@ struct ElsonSettingsView: View {
                     isOn: $appSettings.restoreOriginalClipboardAfterPasteEnabled
                 )
                 .disabled(!appSettings.autoPasteEnabled)
+                Toggle("Use screenshot OCR in Transcript mode", isOn: $appSettings.transcriptScreenOCREnabled)
+                Text("When off, Transcript mode ignores screen OCR and uses only the dictated text plus normal transcript cleanup.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Toggle("Mute system audio during recording", isOn: $appSettings.muteSystemAudioDuringRecording)
             }
 
