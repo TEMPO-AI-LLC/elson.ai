@@ -99,10 +99,12 @@ private struct ElsonCompatSurfaceModifier<S: Shape>: ViewModifier {
             .overlay {
                 shape
                     .fill(tint)
+                    .allowsHitTesting(false)
             }
             .overlay {
                 shape
                     .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                    .allowsHitTesting(false)
             }
             .shadow(color: Color.black.opacity(0.14), radius: 18, y: 8)
     }
