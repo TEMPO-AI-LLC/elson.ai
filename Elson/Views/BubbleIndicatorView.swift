@@ -3,6 +3,7 @@ import UniformTypeIdentifiers
 
 struct BubbleIndicatorView: View {
     @Environment(AppSettings.self) private var appSettings
+    @Environment(ChatStore.self) private var chatStore
     let recordingService: AudioRecordingService
     @State private var isDropTargeted = false
 
@@ -13,6 +14,14 @@ struct BubbleIndicatorView: View {
                 inputLevel: recordingService.inputLevel,
                 action: toggleThreadWindow
             )
+
+            if appSettings.indicatorState == .error, appSettings.canReplayLastCapture {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(.white)
+                    .shadow(radius: 4)
+                    .allowsHitTesting(false)
+            }
         }
         .frame(width: 64, height: 64, alignment: .center)
         .fixedSize()
@@ -42,6 +51,10 @@ struct BubbleIndicatorView: View {
     }
 
     private func toggleThreadWindow() {
+        if appSettings.indicatorState == .error,
+           appSettings.reprocessLastCapturedSession(chatStore: chatStore, source: "bubble_replay") {
+            return
+        }
         NotificationCenter.default.post(name: .toggleThreadWindow, object: nil)
     }
 

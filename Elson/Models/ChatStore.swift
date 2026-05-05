@@ -143,6 +143,7 @@ struct ChatMessage: Identifiable, Equatable, Codable {
     let attachments: [ChatMessageAttachment]
     let showsAttachmentChip: Bool
     let feedbackSubject: FeedbackSubject?
+    let captureSessionId: String?
 
     init(
         id: UUID = UUID(),
@@ -153,7 +154,8 @@ struct ChatMessage: Identifiable, Equatable, Codable {
         insertedText: String? = nil,
         attachments: [ChatMessageAttachment] = [],
         showsAttachmentChip: Bool = false,
-        feedbackSubject: FeedbackSubject? = nil
+        feedbackSubject: FeedbackSubject? = nil,
+        captureSessionId: String? = nil
     ) {
         self.id = id
         self.role = role
@@ -166,6 +168,8 @@ struct ChatMessage: Identifiable, Equatable, Codable {
         self.attachments = attachments
         self.showsAttachmentChip = showsAttachmentChip
         self.feedbackSubject = feedbackSubject
+        let trimmedCaptureSessionId = captureSessionId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.captureSessionId = trimmedCaptureSessionId?.isEmpty == false ? trimmedCaptureSessionId : nil
     }
 
     init(from decoder: Decoder) throws {
@@ -179,6 +183,7 @@ struct ChatMessage: Identifiable, Equatable, Codable {
         attachments = try container.decodeIfPresent([ChatMessageAttachment].self, forKey: .attachments) ?? []
         showsAttachmentChip = try container.decodeIfPresent(Bool.self, forKey: .showsAttachmentChip) ?? false
         feedbackSubject = try container.decodeIfPresent(FeedbackSubject.self, forKey: .feedbackSubject)
+        captureSessionId = try container.decodeIfPresent(String.self, forKey: .captureSessionId)
     }
 }
 
@@ -329,6 +334,8 @@ final class ChatStore {
         overrideRawTranscript: Bool = false,
         insertedText: String? = nil,
         overrideInsertedText: Bool = false,
+        captureSessionId: String? = nil,
+        overrideCaptureSessionId: Bool = false,
         attachments: [ChatMessageAttachment]? = nil,
         showsAttachmentChip: Bool? = nil,
         with content: String
@@ -345,10 +352,16 @@ final class ChatStore {
             insertedText: overrideInsertedText ? insertedText : existing.insertedText,
             attachments: attachments ?? existing.attachments,
             showsAttachmentChip: showsAttachmentChip ?? existing.showsAttachmentChip,
-            feedbackSubject: existing.feedbackSubject
+            feedbackSubject: existing.feedbackSubject,
+            captureSessionId: overrideCaptureSessionId ? captureSessionId : existing.captureSessionId
         )
         thread = current
         persistCurrentThread()
+    }
+
+    @MainActor
+    func containsMessage(id: UUID) -> Bool {
+        thread.messages.contains { $0.id == id }
     }
 
     @MainActor
@@ -364,7 +377,8 @@ final class ChatStore {
             insertedText: current.messages[index].insertedText,
             attachments: current.messages[index].attachments,
             showsAttachmentChip: current.messages[index].showsAttachmentChip,
-            feedbackSubject: current.messages[index].feedbackSubject
+            feedbackSubject: current.messages[index].feedbackSubject,
+            captureSessionId: current.messages[index].captureSessionId
         )
         thread = current
         persistCurrentThread()

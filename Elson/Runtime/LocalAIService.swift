@@ -200,7 +200,13 @@ struct LocalAIService: Sendable {
         body.appendFormField(named: "model", value: model, boundary: boundary)
         body.appendFormField(named: "temperature", value: "0", boundary: boundary)
         body.appendFormField(named: "response_format", value: "verbose_json", boundary: boundary)
-        body.appendFileField(named: "file", filename: audioURL.lastPathComponent, mimeType: "audio/m4a", data: audioData, boundary: boundary)
+        body.appendFileField(
+            named: "file",
+            filename: audioURL.lastPathComponent,
+            mimeType: audioMimeType(for: audioURL),
+            data: audioData,
+            boundary: boundary
+        )
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
         request.httpBody = body
 
@@ -2275,6 +2281,25 @@ struct LocalAIService: Sendable {
 
     private func rawBodyText(from data: Data) -> String {
         String(data: data, encoding: .utf8) ?? "<non-utf8 body bytes=\(data.count)>"
+    }
+
+    private func audioMimeType(for url: URL) -> String {
+        switch url.pathExtension.lowercased() {
+        case "wav":
+            return "audio/wav"
+        case "mp3":
+            return "audio/mpeg"
+        case "webm":
+            return "audio/webm"
+        case "flac":
+            return "audio/flac"
+        case "ogg":
+            return "audio/ogg"
+        case "m4a", "mp4":
+            return "audio/m4a"
+        default:
+            return "application/octet-stream"
+        }
     }
 
     private func prettyJSONString(from object: Any) -> String? {

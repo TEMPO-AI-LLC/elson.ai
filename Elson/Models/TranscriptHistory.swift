@@ -12,6 +12,7 @@ struct TranscriptHistoryEntry: Identifiable, Codable, Hashable {
     let routingSource: String?
     let forcedRouteReason: String?
     let summaryTitle: String?
+    let captureSessionId: String?
 
     init(
         id: UUID = UUID(),
@@ -24,7 +25,8 @@ struct TranscriptHistoryEntry: Identifiable, Codable, Hashable {
         actualRoute: String? = nil,
         routingSource: String? = nil,
         forcedRouteReason: String? = nil,
-        summaryTitle: String? = nil
+        summaryTitle: String? = nil,
+        captureSessionId: String? = nil
     ) {
         self.id = id
         self.text = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -44,6 +46,8 @@ struct TranscriptHistoryEntry: Identifiable, Codable, Hashable {
         self.forcedRouteReason = trimmedForcedRouteReason?.isEmpty == false ? trimmedForcedRouteReason : nil
         let trimmedSummaryTitle = summaryTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.summaryTitle = trimmedSummaryTitle?.isEmpty == false ? trimmedSummaryTitle : nil
+        let trimmedCaptureSessionId = captureSessionId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.captureSessionId = trimmedCaptureSessionId?.isEmpty == false ? trimmedCaptureSessionId : nil
     }
 
     var displayTitle: String {
@@ -66,7 +70,8 @@ struct TranscriptHistoryEntry: Identifiable, Codable, Hashable {
             actualRoute: actualRoute,
             routingSource: routingSource,
             forcedRouteReason: forcedRouteReason,
-            summaryTitle: title
+            summaryTitle: title,
+            captureSessionId: captureSessionId
         )
     }
 }

@@ -2,7 +2,10 @@ import SwiftUI
 
 struct ThreadHistoryTopChrome: View {
     let topChromeHeight: CGFloat
+    let replaySessionId: String?
+    let isReprocessing: Bool
     let onNewChat: () -> Void
+    let onReplay: (String) -> Void
 
     var body: some View {
         HStack {
@@ -14,6 +17,28 @@ struct ThreadHistoryTopChrome: View {
                     .elsonGlassSurface(.control, in: Circle())
             }
             .buttonStyle(.plain)
+
+            if let replaySessionId {
+                Button {
+                    onReplay(replaySessionId)
+                } label: {
+                    Group {
+                        if isReprocessing {
+                            ProgressView()
+                                .scaleEffect(0.55)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.primary)
+                        }
+                    }
+                    .frame(width: 32, height: 32)
+                    .elsonGlassSurface(.control, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(isReprocessing)
+                .help("Replay")
+            }
 
             Spacer()
             SettingsLink {
@@ -148,6 +173,7 @@ struct ThreadHistoryMessageRow: View {
     let onOpenAttachment: (ChatMessageAttachment) -> Void
     let onHoverAssistant: (Bool) -> Void
     let onSubmitFeedback: (ConversationThreadMessage, FeedbackRating, FeedbackRouteOverride, String) -> Void
+    let onReplayVoiceMessage: (String) -> Void
 
     @State private var isFeedbackComposerVisible = false
     @State private var feedbackRating: FeedbackRating = .good
@@ -194,6 +220,20 @@ struct ThreadHistoryMessageRow: View {
                 }
 
                 Spacer(minLength: 0)
+
+                if !isAssistant,
+                   let captureSessionId = message.captureSessionId {
+                    Button {
+                        onReplayVoiceMessage(captureSessionId)
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 22, height: 22)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Replay")
+                }
 
                 if !isAssistant,
                    message.showsAttachmentChip,

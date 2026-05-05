@@ -3,6 +3,7 @@ import SwiftUI
 
 struct StatusMenuView: View {
     @Environment(AppSettings.self) private var appSettings
+    @Environment(ChatStore.self) private var chatStore
     let recordingService: AudioRecordingService
 
     var body: some View {
@@ -11,6 +12,17 @@ struct StatusMenuView: View {
                 HStack {
                     Text("Elson.ai")
                         .font(.headline)
+                    if let sessionId = appSettings.lastReplayableCaptureSessionId {
+                        Button {
+                            appSettings.reprocessCapturedSession(sessionId: sessionId, chatStore: chatStore, source: "menu_replay")
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .frame(width: 24, height: 24)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(appSettings.reprocessingCapturedSessionId != nil)
+                        .help("Replay")
+                    }
                     Spacer()
                     statusDot
                 }
@@ -101,22 +113,71 @@ struct StatusMenuView: View {
 
     @ViewBuilder
     private func outputCard(title: String, text: String) -> some View {
-        Button {
-            _ = ClipboardHelper.copyToClipboard(text)
-        } label: {
-            VStack(alignment: .leading, spacing: 4) {
+        StatusMenuOutputCard(title: title, text: text)
+    }
+}
+
+private struct StatusMenuOutputCard: View {
+    let title: String
+    let text: String
+
+    @State private var isCopied = false
+    @State private var resetTask: Task<Void, Never>? = nil
+
+    private var trimmedText: String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
                 Text(title)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                Text(text)
-                    .font(.caption)
-                    .lineLimit(6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Spacer(minLength: 4)
+
+                if isCopied {
+                    Text("Copied")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.green)
+                }
+
+                Button(action: copy) {
+                    Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.plain)
+                .disabled(trimmedText.isEmpty)
+                .help("Copy")
             }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .elsonGlassSurface(.chrome, in: RoundedRectangle(cornerRadius: 12, style: .continuous), interactive: false)
+
+            Text(text)
+                .font(.caption)
+                .lineLimit(6)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .buttonStyle(.plain)
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .elsonGlassSurface(.chrome, in: RoundedRectangle(cornerRadius: 12, style: .continuous), interactive: false)
+        .onDisappear {
+            resetTask?.cancel()
+            resetTask = nil
+        }
+    }
+
+    private func copy() {
+        guard !trimmedText.isEmpty, ClipboardHelper.copyToClipboard(trimmedText) else { return }
+
+        resetTask?.cancel()
+        isCopied = true
+        resetTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_100_000_000)
+            guard !Task.isCancelled else { return }
+            isCopied = false
+            resetTask = nil
+        }
     }
 }

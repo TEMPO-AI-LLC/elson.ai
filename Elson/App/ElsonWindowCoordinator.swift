@@ -77,6 +77,7 @@ final class ElsonWindowCoordinator {
 
         let bubbleRootView = BubbleIndicatorView(recordingService: recordingService)
             .environment(appSettings)
+            .environment(chatStore)
 
         let window = FloatingIndicatorWindow()
         window.contentView = NonActivatingHostingView(rootView: bubbleRootView)

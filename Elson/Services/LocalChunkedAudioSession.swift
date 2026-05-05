@@ -62,8 +62,10 @@ final class LocalChunkedAudioSession {
     private let chunkDuration: TimeInterval
     private let aiService = LocalAIService()
     private let retryStore: LocalChunkedAudioRetryStore
+    private let archiveStore: LocalCapturedAudioSessionStore
     private let sessionId = UUID().uuidString
     private let requestLogContext: LocalRequestLogContext?
+    private var modeHint: InteractionMode?
     private let maxChunkTranscriptionAttempts = 4
 
     private(set) var state: State = .idle
@@ -78,19 +80,33 @@ final class LocalChunkedAudioSession {
         recordingService: AudioRecordingService,
         groqAPIKey: String,
         chunkDuration: TimeInterval = 30,
+        modeHint: InteractionMode? = nil,
         requestLogContext: LocalRequestLogContext? = nil,
-        retryStore: LocalChunkedAudioRetryStore = LocalChunkedAudioRetryStore()
+        retryStore: LocalChunkedAudioRetryStore = LocalChunkedAudioRetryStore(),
+        archiveStore: LocalCapturedAudioSessionStore = LocalCapturedAudioSessionStore()
     ) {
         self.recordingService = recordingService
         self.groqAPIKey = groqAPIKey
         self.chunkDuration = chunkDuration
+        self.modeHint = modeHint
         self.requestLogContext = requestLogContext
         self.retryStore = retryStore
+        self.archiveStore = archiveStore
     }
 
     var isRecording: Bool { state == .recording }
     var isStopped: Bool { state == .stopped }
     var requestId: String? { requestLogContext?.requestId }
+    var persistedSessionId: String { sessionId }
+
+    func updateReplayContext(mode: InteractionMode, threadId: String? = nil) {
+        modeHint = mode
+        archiveStore.updateContext(
+            sessionId: sessionId,
+            threadId: threadId ?? requestLogContext?.threadId,
+            mode: mode.rawValue
+        )
+    }
 
     func start() -> Bool {
         guard state == .idle else { return false }
@@ -117,6 +133,20 @@ final class LocalChunkedAudioSession {
                 "audio_chunk_session_start_failed audio_session_id=\(sessionId) chunk_duration_s=\(Int(chunkDuration))"
             )
         } else {
+            do {
+                _ = try archiveStore.createSession(
+                    sessionId: sessionId,
+                    createdAt: startedAt ?? Date(),
+                    requestId: requestLogContext?.requestId,
+                    threadId: requestLogContext?.threadId,
+                    sourceSurface: requestLogContext?.surface,
+                    mode: modeHint?.rawValue
+                )
+            } catch {
+                DebugLog.runtimeError(
+                    "audio_capture_archive_create_failed audio_session_id=\(sessionId) error=\(error.localizedDescription)"
+                )
+            }
             DebugLog.runtime(
                 "audio_chunk_session_started audio_session_id=\(sessionId) session_start_at=\(isoTimestamp(startedAt)) chunk_duration_s=\(Int(chunkDuration))"
             )
@@ -143,6 +173,11 @@ final class LocalChunkedAudioSession {
         guard let finalChunk = recordingService.stopChunkedRecording() else {
             state = .idle
             startedAt = nil
+            archiveStore.markStatus(
+                sessionId: sessionId,
+                status: .failed,
+                errorMessage: LocalChunkedAudioSessionError.missingFinalChunk.localizedDescription
+            )
             DebugLog.runtimeError(
                 "audio_chunk_session_stop_failed audio_session_id=\(sessionId) reason=missing_final_chunk"
             )
@@ -157,6 +192,7 @@ final class LocalChunkedAudioSession {
             state = .idle
             startedAt = nil
             cleanupPersistedSession()
+            archiveStore.markStatus(sessionId: sessionId, status: .cancelled, errorMessage: "Recording too short.")
             if let requestLogContext {
                 DebugLog.requestStageEnd(
                     RequestTimelineSnapshot(
@@ -179,6 +215,17 @@ final class LocalChunkedAudioSession {
         enqueueChunkTranscription(finalChunk)
         state = .stopped
         stoppedAt = Date()
+        do {
+            _ = try archiveStore.writeAudioWAV(
+                sessionId: sessionId,
+                sourceURLs: chunkRecords.values.sorted { $0.index < $1.index }.map(\.audioURL)
+            )
+            archiveStore.markStatus(sessionId: sessionId, status: .stopped)
+        } catch {
+            DebugLog.runtimeError(
+                "audio_capture_archive_wav_failed audio_session_id=\(sessionId) error=\(error.localizedDescription)"
+            )
+        }
         if let requestLogContext {
             let durationMS = Int(Date().timeIntervalSince(stageStartedAt) * 1000)
             DebugLog.requestStageEnd(
@@ -251,6 +298,11 @@ final class LocalChunkedAudioSession {
             .joined(separator: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !rawTranscript.isEmpty else {
+            archiveStore.markStatus(
+                sessionId: sessionId,
+                status: .failed,
+                errorMessage: LocalChunkedAudioSessionError.emptyTranscript.localizedDescription
+            )
             DebugLog.runtimeError(
                 "audio_chunk_finalize_failed audio_session_id=\(sessionId) session_start_at=\(isoTimestamp(startedAt)) reason=empty_transcript"
             )
@@ -267,6 +319,18 @@ final class LocalChunkedAudioSession {
                 .min()
         )
         finalizedDraft = draft
+        do {
+            try archiveStore.writeRawTranscript(
+                sessionId: sessionId,
+                rawTranscript: rawTranscript,
+                snippetCount: orderedSnippets.count,
+                status: .ready
+            )
+        } catch {
+            DebugLog.runtimeError(
+                "audio_capture_archive_raw_failed audio_session_id=\(sessionId) error=\(error.localizedDescription)"
+            )
+        }
         persistSessionSnapshot()
         if let requestLogContext {
             DebugLog.requestStageEnd(
@@ -294,6 +358,7 @@ final class LocalChunkedAudioSession {
         stoppedAt = nil
         state = .idle
         cleanupPersistedSession()
+        archiveStore.markStatus(sessionId: sessionId, status: .delivered)
         DebugLog.runtime("audio_chunk_delivery_completed audio_session_id=\(sessionId)")
     }
 
@@ -307,6 +372,7 @@ final class LocalChunkedAudioSession {
         stoppedAt = nil
         finalizedDraft = nil
         cleanupPersistedSession()
+        archiveStore.markStatus(sessionId: sessionId, status: .cancelled)
         DebugLog.runtime("audio_chunk_session_cancelled audio_session_id=\(sessionId)")
     }
 
@@ -314,6 +380,13 @@ final class LocalChunkedAudioSession {
         guard chunkTasks[chunk.index] == nil else { return }
         nextChunkIndex = max(nextChunkIndex, chunk.index + 1)
         let persistedURL = persistChunkAudio(chunk)
+        do {
+            _ = try archiveStore.stageChunkAudio(sessionId: sessionId, index: chunk.index, sourceURL: persistedURL)
+        } catch {
+            DebugLog.runtimeError(
+                "audio_capture_archive_chunk_failed audio_session_id=\(sessionId) session_start_at=\(isoTimestamp(startedAt)) chunk_index=\(chunk.index) error=\(error.localizedDescription)"
+            )
+        }
         let byteCount = chunkByteCount(at: persistedURL)
         chunkRecords[chunk.index] = ChunkRecord(
             index: chunk.index,
@@ -379,6 +452,7 @@ final class LocalChunkedAudioSession {
         record.errorMessage = nil
         record.completedAt = Date()
         chunkRecords[index] = record
+        persistPartialRawTranscript()
         persistSessionSnapshot()
         DebugLog.runtime(
             "audio_chunk_transcription_completed audio_session_id=\(sessionId) session_start_at=\(isoTimestamp(startedAt)) chunk_index=\(index) snippet_count=\(chunkRecords.count) transcript_chars=\(record.transcript?.count ?? 0)"
@@ -391,6 +465,7 @@ final class LocalChunkedAudioSession {
         record.errorMessage = error.localizedDescription
         record.completedAt = Date()
         chunkRecords[index] = record
+        archiveStore.markStatus(sessionId: sessionId, status: .failed, errorMessage: error.localizedDescription)
         persistSessionSnapshot()
         DebugLog.runtimeError(
             "audio_chunk_transcription_failed audio_session_id=\(sessionId) session_start_at=\(isoTimestamp(startedAt)) chunk_index=\(index) snippet_count=\(chunkRecords.count) error=\(error.localizedDescription)"
@@ -460,6 +535,30 @@ final class LocalChunkedAudioSession {
                 "audio_chunk_persist_failed audio_session_id=\(sessionId) session_start_at=\(isoTimestamp(startedAt)) chunk_index=\(chunk.index) error=\(error.localizedDescription)"
             )
             return chunk.url
+        }
+    }
+
+    private func persistPartialRawTranscript() {
+        let orderedSnippets = chunkRecords.values
+            .sorted { $0.index < $1.index }
+            .compactMap { record -> String? in
+                let trimmedTranscript = record.transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                return trimmedTranscript.isEmpty ? nil : trimmedTranscript
+            }
+        let rawTranscript = orderedSnippets.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawTranscript.isEmpty else { return }
+
+        do {
+            try archiveStore.writeRawTranscript(
+                sessionId: sessionId,
+                rawTranscript: rawTranscript,
+                snippetCount: orderedSnippets.count,
+                status: state == .stopped ? .ready : .transcribing
+            )
+        } catch {
+            DebugLog.runtimeError(
+                "audio_capture_archive_partial_raw_failed audio_session_id=\(sessionId) error=\(error.localizedDescription)"
+            )
         }
     }
 
