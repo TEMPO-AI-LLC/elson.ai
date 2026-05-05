@@ -19,13 +19,16 @@ struct GlassBubble: View {
     @State private var isPulsing = false
     @State private var phaseA = Double.random(in: 0...(2 * Double.pi))
     @State private var phaseB = Double.random(in: 0...(2 * Double.pi))
+    @State private var displayedVoiceLevel: Double = 0
+
+    private static let minimumListeningVisualLevel = 0.12
 
     private var glassTint: Color? {
         switch status {
         case .idle:
             return nil
         case .listening:
-            return Color.white.opacity(0.14)
+            return Color.blue.opacity(0.16)
         case .processing:
             return Color(red: 1.0, green: 0.52, blue: 0.12).opacity(0.15)
         case .agentProcessing, .agentSuccess:
@@ -37,6 +40,11 @@ struct GlassBubble: View {
         }
     }
 
+    private var listeningVisualLevel: Double {
+        guard status == .listening else { return 0 }
+        return max(Self.minimumListeningVisualLevel, displayedVoiceLevel)
+    }
+
     var body: some View {
 
         // Button removed - interaction handled by FloatingIndicatorWindow
@@ -44,14 +52,13 @@ struct GlassBubble: View {
             let t = context.date.timeIntervalSinceReferenceDate
             let lvl = max(0, min(1, inputLevel))
 
-            // Make "no speech" still visible while listening.
-            let recordingStrength = status == .listening ? max(0.08, lvl) : 0
+            let recordingStrength = status == .listening ? max(Self.voiceLevel(from: lvl), listeningVisualLevel) : 0
 
             // Random-ish movement for purple/green.
             let a = 0.5 + 0.5 * sin(t * 1.25 + phaseA)
             let b = 0.5 + 0.5 * sin(t * 0.95 + phaseB)
 
-            let baseScale = isPulsing ? 1.15 : 1.0
+            let baseScale = status == .listening ? 1.0 : (isPulsing ? 1.15 : 1.0)
 
             // Keep transcription clearly orange, and error clearly red (not close to orange).
             let transcriptionOrange = Color(red: 1.0, green: 0.52, blue: 0.12)
@@ -63,7 +70,7 @@ struct GlassBubble: View {
                 case .idle:
                     return Color.gray.opacity(0.24)
                 case .listening:
-                    return Color.white.opacity(0.28 + 0.16 * recordingStrength)
+                    return activeBlue.opacity(0.34 + 0.22 * recordingStrength)
                 case .processing:
                     return transcriptionOrange.opacity(0.46)
                 case .agentProcessing:
@@ -91,7 +98,7 @@ struct GlassBubble: View {
             let accentOpacity: Double = {
                 switch status {
                 case .listening:
-                    return 0.0
+                    return 0.10 + 0.56 * recordingStrength
                 case .agentProcessing:
                     return 0.18 + 0.16 * a
                 case .agentSuccess:
@@ -119,7 +126,7 @@ struct GlassBubble: View {
                 case .agentSuccess:
                     return 0.05 + 0.10 * a
                 case .listening:
-                    return 0.03 * (0.2 + 0.8 * b)
+                    return 0.0
                 case .processing:
                     return 0.04 * (0.2 + 0.8 * b)
                 case .agentProcessing:
@@ -169,9 +176,6 @@ struct GlassBubble: View {
                         .blur(radius: 2)
                 }
 
-                if status == .listening {
-                    listeningBars(level: recordingStrength)
-                }
             }
             .frame(width: 44, height: 44)
             .elsonGlassSurface(.bubble, in: Circle(), tint: glassTint)
@@ -182,19 +186,16 @@ struct GlassBubble: View {
         .onChange(of: status) { _, newStatus in
             handleStatusChange(newStatus)
         }
+        .onChange(of: inputLevel) { _, newValue in
+            updateDisplayedVoiceLevel(for: newValue)
+        }
     }
 
-    private func listeningBars(level: Double) -> some View {
-        HStack(spacing: 4) {
-            ForEach(0..<3, id: \.self) { index in
-                let emphasis = [0.72, 1.0, 0.82][index]
-                Capsule()
-                    .fill(Color.blue.opacity(0.56 + 0.34 * level))
-                    .frame(width: 5, height: 8 + 24 * level * emphasis)
-                    .shadow(color: Color.blue.opacity(0.18 + 0.42 * level), radius: 4 + 3 * level)
-            }
-        }
-        .frame(width: 30, height: 34)
+    private static func voiceLevel(from inputLevel: Double) -> Double {
+        let clamped = max(0, min(1, inputLevel))
+        let floor = 0.04
+        guard clamped > floor else { return 0 }
+        return min(1, (clamped - floor) / 0.46)
     }
 
     private func handleStatusChange(_ newStatus: Status) {
@@ -203,20 +204,25 @@ struct GlassBubble: View {
 
         switch newStatus {
         case .listening:
-            break
+            withAnimation(.easeOut(duration: 0.12)) {
+                displayedVoiceLevel = max(Self.minimumListeningVisualLevel, Self.voiceLevel(from: inputLevel))
+            }
 
         case .processing:
+            displayedVoiceLevel = 0
             // Gentle pulse for processing (no rotation)
             withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
                 isPulsing = true
             }
 
         case .agentProcessing:
+            displayedVoiceLevel = 0
             withAnimation(.easeInOut(duration: 0.95).repeatForever(autoreverses: true)) {
                 isPulsing = true
             }
 
         case .success:
+            displayedVoiceLevel = 0
             // Brief glow effect for success
             withAnimation(.easeOut(duration: 0.3)) {
                 isPulsing = true
@@ -228,6 +234,7 @@ struct GlassBubble: View {
             }
 
         case .agentSuccess:
+            displayedVoiceLevel = 0
             withAnimation(.easeOut(duration: 0.2)) {
                 isPulsing = true
             }
@@ -238,6 +245,7 @@ struct GlassBubble: View {
             }
 
         case .error:
+            displayedVoiceLevel = 0
             // Brief pulse for error
             withAnimation(.easeOut(duration: 0.2)) {
                 isPulsing = true
@@ -249,8 +257,19 @@ struct GlassBubble: View {
             }
 
         case .idle:
+            displayedVoiceLevel = 0
             // No animation for idle
             break
+        }
+    }
+
+    private func updateDisplayedVoiceLevel(for inputLevel: Double) {
+        guard status == .listening else { return }
+
+        let target = max(Self.minimumListeningVisualLevel, Self.voiceLevel(from: inputLevel))
+        let duration = target >= displayedVoiceLevel ? 0.08 : 0.85
+        withAnimation(.easeOut(duration: duration)) {
+            displayedVoiceLevel = target
         }
     }
 }

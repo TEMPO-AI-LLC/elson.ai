@@ -84,8 +84,8 @@ final class LocalChunkedAudioSession {
     init(
         recordingService: AudioRecordingService,
         groqAPIKey: String,
-        chunkDuration: TimeInterval = 45,
-        transcriptionOverlapDuration: TimeInterval = 10,
+        chunkDuration: TimeInterval = 25,
+        transcriptionOverlapDuration: TimeInterval = 5,
         modeHint: InteractionMode? = nil,
         requestLogContext: LocalRequestLogContext? = nil,
         retryStore: LocalChunkedAudioRetryStore = LocalChunkedAudioRetryStore(),
