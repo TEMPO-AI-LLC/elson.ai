@@ -319,6 +319,7 @@ final class KeyboardService {
             let session = LocalChunkedAudioSession(
                 recordingService: recordingService,
                 groqAPIKey: appSettings.makeLocalConfig().groqAPIKey,
+                modeHint: mode,
                 requestLogContext: LocalRequestLogContext(
                     requestId: requestId,
                     threadId: targetThreadId,
@@ -476,6 +477,7 @@ final class KeyboardService {
                     }
                     return
                 }
+                session.updateReplayContext(mode: runtimeMode ?? .transcription, threadId: threadId)
 
                 if case let .threadComposer(targetThreadId) = destination {
                     let audioDraft = try await session.finalize()
@@ -536,7 +538,8 @@ final class KeyboardService {
                             role: .user,
                             content: "Voice message...",
                             style: .voiceTranscript,
-                            rawTranscript: audioDraft.rawTranscript
+                            rawTranscript: audioDraft.rawTranscript,
+                            captureSessionId: session.persistedSessionId
                         )
                     )
                     chatStore.beginRun(threadId: threadId, mode: optimisticTarget, optimisticUserMessageId: optimisticMessageId)
@@ -591,6 +594,7 @@ final class KeyboardService {
                     session.markDeliveryCompleted()
                     self.activeChunkedSession = nil
                     self.activeRecordingShortcut = nil
+                    let captureSessionId = session.persistedSessionId
                     let effectiveThreadId = result.responseThreadId ?? threadId
                     let assistantMessageId = UUID()
                     let userAttachments = self.persistUserAttachmentsIfNeeded(
@@ -611,6 +615,8 @@ final class KeyboardService {
                         style: .voiceTranscript,
                         rawTranscript: result.rawTranscript,
                         overrideRawTranscript: true,
+                        captureSessionId: captureSessionId,
+                        overrideCaptureSessionId: true,
                         attachments: userAttachments,
                         showsAttachmentChip: !userAttachments.isEmpty,
                         with: result.transcript.isEmpty ? "Voice message..." : result.transcript
@@ -625,7 +631,7 @@ final class KeyboardService {
                         )
                     )
                     chatStore.endRun(threadId: threadId)
-                    appSettings.recordLastOutput(from: result)
+                    appSettings.recordLastOutput(from: result, captureSessionId: captureSessionId)
                     if runtimeMode == .agent {
                         chatStore.noteConversationActivity(
                             threadId: effectiveThreadId,
@@ -646,7 +652,8 @@ final class KeyboardService {
                             actualRoute: result.actualRoute,
                             routingSource: result.routingSource,
                             forcedRouteReason: result.forcedRouteReason,
-                            requestId: result.requestId
+                            requestId: result.requestId,
+                            captureSessionId: captureSessionId
                         )
                     }
                     visibleOutputCommittedAt = Date()
@@ -726,14 +733,35 @@ final class KeyboardService {
                     self.activeShortcutLatencyState = nil
                     self.shortcutScreenContextPrefetchTask = nil
                     self.shortcutDeliveryInFlight = false
+                    let captureSessionId = session.persistedSessionId
+                    let archivedRawTranscript = LocalCapturedAudioSessionStore().rawTranscript(sessionId: captureSessionId)
                     let friendlyMessage = self.userFacingShortcutErrorMessage(error.localizedDescription)
+                    appSettings.recordCaptureFailure(sessionId: captureSessionId, errorMessage: friendlyMessage)
                     if case .runtime = destination {
-                        chatStore.replaceMessage(
-                            id: optimisticMessageId,
-                            role: .user,
-                            style: .voiceTranscript,
-                            with: "Voice message"
-                        )
+                        let userContent = archivedRawTranscript ?? "Voice message"
+                        if chatStore.containsMessage(id: optimisticMessageId) {
+                            chatStore.replaceMessage(
+                                id: optimisticMessageId,
+                                role: .user,
+                                style: .voiceTranscript,
+                                rawTranscript: archivedRawTranscript,
+                                overrideRawTranscript: true,
+                                captureSessionId: captureSessionId,
+                                overrideCaptureSessionId: true,
+                                with: userContent
+                            )
+                        } else {
+                            chatStore.append(
+                                ChatMessage(
+                                    id: optimisticMessageId,
+                                    role: .user,
+                                    content: userContent,
+                                    style: .voiceTranscript,
+                                    rawTranscript: archivedRawTranscript,
+                                    captureSessionId: captureSessionId
+                                )
+                            )
+                        }
                         chatStore.append(ChatMessage(role: .assistant, content: friendlyMessage))
                         chatStore.endRun(threadId: threadId)
                         chatStore.noteConversationActivity(

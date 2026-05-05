@@ -15,6 +15,7 @@ struct LastOutputSnapshot: Identifiable, Codable, Equatable, Hashable {
     let visibleOutputSource: String
     let hasScreenContext: Bool
     let createdAt: Date
+    let captureSessionId: String?
 
     init(
         id: UUID = UUID(),
@@ -30,7 +31,8 @@ struct LastOutputSnapshot: Identifiable, Codable, Equatable, Hashable {
         debugReason: String,
         visibleOutputSource: String,
         hasScreenContext: Bool,
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        captureSessionId: String? = nil
     ) {
         self.id = id
         self.processedText = processedText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -49,6 +51,8 @@ struct LastOutputSnapshot: Identifiable, Codable, Equatable, Hashable {
         self.visibleOutputSource = visibleOutputSource.trimmingCharacters(in: .whitespacesAndNewlines)
         self.hasScreenContext = hasScreenContext
         self.createdAt = createdAt
+        let trimmedCaptureSessionId = captureSessionId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.captureSessionId = trimmedCaptureSessionId?.isEmpty == false ? trimmedCaptureSessionId : nil
     }
 
     var hasRawTranscript: Bool {

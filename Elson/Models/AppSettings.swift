@@ -72,6 +72,7 @@ final class AppSettings {
         static let copyTranscriptToClipboardEnabled = "copy_transcript_to_clipboard_enabled"
         static let restoreOriginalClipboardAfterPasteEnabled = "restore_original_clipboard_after_paste_enabled"
         static let transcriptScreenOCREnabled = "transcript_screen_ocr_enabled"
+        static let capturedAudioRetentionDays = LocalCapturedAudioSessionStore.retentionDaysDefaultsKey
         static let agentModeEnabled = "agent_mode_enabled"
         static let skillsEnabled = "skills_enabled"
         static let skillSelectionScope = "skill_selection_scope"
@@ -237,6 +238,19 @@ final class AppSettings {
         }
     }
 
+    var capturedAudioRetentionDays: Int = 30 {
+        didSet {
+            let normalized = min(365, max(1, capturedAudioRetentionDays))
+            if normalized != capturedAudioRetentionDays {
+                capturedAudioRetentionDays = normalized
+                return
+            }
+            UserDefaults.standard.set(normalized, forKey: Keys.capturedAudioRetentionDays)
+            LocalCapturedAudioSessionStore(retentionDays: normalized).purgeExpiredSessions()
+            refreshCapturedAudioSessions()
+        }
+    }
+
     var agentModeEnabled: Bool = true {
         didSet {
             UserDefaults.standard.set(agentModeEnabled, forKey: Keys.agentModeEnabled)
@@ -322,6 +336,10 @@ final class AppSettings {
     var lastOutputSnapshot: LastOutputSnapshot? = nil
     var activeFeedbackContext: ActiveFeedbackContext? = nil
     private(set) var transcriptHistory: [TranscriptHistoryEntry] = []
+    private(set) var capturedAudioSessions: [LocalCapturedAudioSessionSnapshot] = []
+    private(set) var reprocessingCapturedSessionId: String? = nil
+    private(set) var lastReplayErrorMessage: String? = nil
+    private(set) var lastReplayableCaptureSessionId: String? = nil
     private(set) var microphonePermissionGranted: Bool = PermissionCoordinator.hasMicrophonePermission()
     private(set) var screenRecordingPermissionGranted: Bool = PermissionCoordinator.hasScreenRecordingPermission()
     private(set) var accessibilityPermissionGranted: Bool = PermissionCoordinator.hasAccessibilityPermission()
@@ -347,6 +365,12 @@ final class AppSettings {
 
     var lastTranscription: String {
         lastOutputSnapshot?.processedText ?? ""
+    }
+
+    var canReplayLastCapture: Bool {
+        guard let lastReplayableCaptureSessionId else { return false }
+        return reprocessingCapturedSessionId == nil
+            && LocalCapturedAudioSessionStore().load(sessionId: lastReplayableCaptureSessionId) != nil
     }
 
     var activeSkills: [RegisteredSkill] {
@@ -585,7 +609,7 @@ final class AppSettings {
         return true
     }
 
-    func recordLastOutput(from result: RuntimeExecutionResult) {
+    func recordLastOutput(from result: RuntimeExecutionResult, captureSessionId: String? = nil) {
         let snapshot = LastOutputSnapshot(
             processedText: result.replyText,
             rawTranscript: result.rawTranscript,
@@ -598,10 +622,289 @@ final class AppSettings {
             forcedRouteReason: result.forcedRouteReason,
             debugReason: result.debugReason,
             visibleOutputSource: result.visibleOutputSource,
-            hasScreenContext: result.hasScreenContext
+            hasScreenContext: result.hasScreenContext,
+            captureSessionId: captureSessionId
         )
         guard snapshot.isUsableForFeedback else { return }
         lastOutputSnapshot = snapshot
+        if let captureSessionId {
+            lastReplayableCaptureSessionId = captureSessionId
+        }
+    }
+
+    @discardableResult
+    func recordCaptureFailure(sessionId: String?, errorMessage: String) -> Bool {
+        guard let sessionId = sessionId?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !sessionId.isEmpty
+        else {
+            return false
+        }
+
+        LocalCapturedAudioSessionStore().markStatus(
+            sessionId: sessionId,
+            status: .failed,
+            errorMessage: errorMessage
+        )
+        lastReplayableCaptureSessionId = sessionId
+        lastReplayErrorMessage = errorMessage
+        refreshCapturedAudioSessions()
+        return true
+    }
+
+    func refreshCapturedAudioSessions() {
+        capturedAudioSessions = LocalCapturedAudioSessionStore().recentSessions(limit: 50)
+    }
+
+    func purgeCapturedAudioSessions() {
+        LocalCapturedAudioSessionStore().purgeAllSessions()
+        capturedAudioSessions = []
+        lastReplayableCaptureSessionId = nil
+        lastReplayErrorMessage = nil
+    }
+
+    @discardableResult
+    func reprocessLastCapturedSession(chatStore: ChatStore, source: String = "replay") -> Bool {
+        guard let sessionId = lastReplayableCaptureSessionId else { return false }
+        return reprocessCapturedSession(sessionId: sessionId, chatStore: chatStore, source: source)
+    }
+
+    @discardableResult
+    func reprocessCapturedSession(sessionId: String, chatStore: ChatStore, source: String = "replay") -> Bool {
+        let trimmedSessionId = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSessionId.isEmpty, reprocessingCapturedSessionId == nil else { return false }
+
+        let store = LocalCapturedAudioSessionStore()
+        guard let snapshot = store.load(sessionId: trimmedSessionId) else {
+            lastReplayErrorMessage = "Saved capture is missing."
+            return false
+        }
+
+        let mode = replayMode(for: snapshot, chatStore: chatStore)
+        let targetThreadId = snapshot.threadId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let threadId = targetThreadId?.isEmpty == false ? targetThreadId! : chatStore.thread.id
+        if chatStore.thread.id != threadId {
+            chatStore.openPersistedThread(id: threadId)
+        }
+
+        let requestId = UUID().uuidString
+        let optimisticMessageId = UUID()
+        let initialRawTranscript = store.rawTranscript(sessionId: trimmedSessionId)
+        let userContent = initialRawTranscript ?? "Voice message..."
+        let target = mode == .agent ? ThreadReplyTarget.agent : .transcript
+        let config = makeLocalConfig()
+        let clipboardText = ClipboardHelper.getClipboardContent()
+        let conversationHistory = replayConversationHistory(from: chatStore.thread.messages, excluding: optimisticMessageId)
+
+        chatStore.append(
+            ChatMessage(
+                id: optimisticMessageId,
+                role: .user,
+                content: userContent,
+                style: .voiceTranscript,
+                rawTranscript: initialRawTranscript,
+                captureSessionId: trimmedSessionId
+            )
+        )
+        chatStore.beginRun(threadId: threadId, mode: target, optimisticUserMessageId: optimisticMessageId)
+        reprocessingCapturedSessionId = trimmedSessionId
+        lastReplayErrorMessage = nil
+        indicatorState = mode == .agent ? .agentProcessing : .processing
+        NotificationCenter.default.post(name: .openThreadWindow, object: nil)
+
+        Task { @MainActor in
+            do {
+                let rawTranscript = try await loadReplayTranscript(
+                    sessionId: trimmedSessionId,
+                    snapshot: snapshot,
+                    store: store,
+                    config: config,
+                    requestId: requestId,
+                    threadId: threadId
+                )
+                let result = try await ElsonRuntime.shared.processAudioTranscriptWithRetry(
+                    requestId: requestId,
+                    rawTranscript: rawTranscript,
+                    snippetCount: snapshot.snippetCount,
+                    mode: mode,
+                    surface: source,
+                    threadId: threadId,
+                    config: config,
+                    clipboardText: clipboardText,
+                    attachments: [],
+                    screenshotJPEGData: [],
+                    conversationHistory: conversationHistory
+                )
+                let actionNotes = await DesktopActionExecutor.execute(result.actions, appSettings: self)
+                if !actionNotes.isEmpty {
+                    print(actionNotes.joined(separator: " "))
+                }
+
+                let effectiveThreadId = result.responseThreadId ?? threadId
+                if effectiveThreadId != threadId {
+                    chatStore.adoptThreadIdPreservingMessages(newId: effectiveThreadId)
+                }
+                chatStore.replaceMessage(
+                    id: optimisticMessageId,
+                    role: .user,
+                    style: .voiceTranscript,
+                    rawTranscript: result.rawTranscript ?? rawTranscript,
+                    overrideRawTranscript: true,
+                    captureSessionId: trimmedSessionId,
+                    overrideCaptureSessionId: true,
+                    with: result.transcript.isEmpty ? rawTranscript : result.transcript
+                )
+                chatStore.append(
+                    ChatMessage(
+                        role: .assistant,
+                        content: result.replyText,
+                        insertedText: result.clipboardText,
+                        feedbackSubject: result.feedbackSubject
+                    )
+                )
+                chatStore.endRun(threadId: threadId)
+                chatStore.noteConversationActivity(
+                    threadId: effectiveThreadId,
+                    lastMessage: result.replyText,
+                    lastRole: "assistant",
+                    lastReplyTarget: result.replyMode,
+                    sessionKey: result.sessionKey,
+                    markUnread: false
+                )
+                recordLastOutput(from: result, captureSessionId: trimmedSessionId)
+                if !result.replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    appendTranscriptHistory(
+                        text: result.replyText,
+                        rawTranscript: result.rawTranscript,
+                        source: source,
+                        threadId: effectiveThreadId,
+                        replyMode: result.replyMode,
+                        actualRoute: result.actualRoute,
+                        routingSource: result.routingSource,
+                        forcedRouteReason: result.forcedRouteReason,
+                        requestId: result.requestId,
+                        captureSessionId: trimmedSessionId
+                    )
+                }
+                _ = ClipboardHelper.deliverTranscript(
+                    result.clipboardText,
+                    behavior: transcriptClipboardBehavior()
+                )
+                reprocessingCapturedSessionId = nil
+                lastReplayableCaptureSessionId = trimmedSessionId
+                indicatorState = mode == .agent ? .agentSuccess : .success
+                store.markStatus(sessionId: trimmedSessionId, status: .delivered)
+                refreshCapturedAudioSessions()
+            } catch {
+                let friendlyMessage = userFacingReplayErrorMessage(error.localizedDescription)
+                let archivedRawTranscript = store.rawTranscript(sessionId: trimmedSessionId)
+                let fallbackContent = archivedRawTranscript ?? "Voice message"
+                if chatStore.containsMessage(id: optimisticMessageId) {
+                    chatStore.replaceMessage(
+                        id: optimisticMessageId,
+                        role: .user,
+                        style: .voiceTranscript,
+                        rawTranscript: archivedRawTranscript,
+                        overrideRawTranscript: true,
+                        captureSessionId: trimmedSessionId,
+                        overrideCaptureSessionId: true,
+                        with: fallbackContent
+                    )
+                }
+                chatStore.append(ChatMessage(role: .assistant, content: friendlyMessage))
+                chatStore.endRun(threadId: threadId)
+                reprocessingCapturedSessionId = nil
+                _ = recordCaptureFailure(sessionId: trimmedSessionId, errorMessage: friendlyMessage)
+                indicatorState = .error
+                NotificationHelper.showNotification(
+                    title: "Elson.ai",
+                    body: friendlyMessage,
+                    sound: .default
+                )
+            }
+        }
+
+        return true
+    }
+
+    private func loadReplayTranscript(
+        sessionId: String,
+        snapshot: LocalCapturedAudioSessionSnapshot,
+        store: LocalCapturedAudioSessionStore,
+        config: ElsonLocalConfig,
+        requestId: String,
+        threadId: String
+    ) async throws -> String {
+        if let rawTranscript = store.rawTranscript(sessionId: sessionId) {
+            return rawTranscript
+        }
+
+        guard let audioURL = store.audioURL(sessionId: sessionId) else {
+            throw NSError(
+                domain: "ai.elson.desktop.replay",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Saved audio is missing."]
+            )
+        }
+
+        let rawTranscript = try await LocalAIService().transcribe(
+            audioURL: audioURL,
+            groqAPIKey: config.groqAPIKey,
+            logContext: LocalRequestLogContext(
+                requestId: requestId,
+                threadId: threadId,
+                surface: "replay",
+                inputSource: "audio"
+            ),
+            extraMetadata: "replay_session_id=\(sessionId)"
+        )
+        try? store.writeRawTranscript(
+            sessionId: sessionId,
+            rawTranscript: rawTranscript,
+            snippetCount: snapshot.snippetCount ?? 1,
+            status: .ready
+        )
+        return rawTranscript
+    }
+
+    private func replayMode(for snapshot: LocalCapturedAudioSessionSnapshot, chatStore: ChatStore) -> InteractionMode {
+        let rawMode = snapshot.mode?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        if rawMode == InteractionMode.agent.rawValue {
+            return .agent
+        }
+        if rawMode == InteractionMode.transcription.rawValue || rawMode == "transcript" {
+            return .transcription
+        }
+
+        let threadId = snapshot.threadId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallbackThreadId = threadId?.isEmpty == false ? threadId! : chatStore.thread.id
+        return ThreadModeStore.get(threadId: fallbackThreadId) == .agent ? .agent : .transcription
+    }
+
+    private func replayConversationHistory(from messages: [ChatMessage], excluding messageId: UUID, limit: Int = 12) -> [ElsonConversationTurnPayload] {
+        let turns = messages.compactMap { message -> ElsonConversationTurnPayload? in
+            guard message.id != messageId else { return nil }
+            let content = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !content.isEmpty else { return nil }
+
+            switch message.role {
+            case .user:
+                return ElsonConversationTurnPayload(role: .user, content: content)
+            case .assistant:
+                return ElsonConversationTurnPayload(role: .assistant, content: content)
+            case .system:
+                return nil
+            }
+        }
+
+        return Array(turns.suffix(limit))
+    }
+
+    private func userFacingReplayErrorMessage(_ message: String) -> String {
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("Error:") {
+            return trimmed
+        }
+        return "Error: \(trimmed)"
     }
 
     @discardableResult
@@ -890,6 +1193,7 @@ final class AppSettings {
         copyTranscriptToClipboardEnabled = false
         restoreOriginalClipboardAfterPasteEnabled = false
         transcriptScreenOCREnabled = true
+        capturedAudioRetentionDays = 30
         agentModeEnabled = true
         skillsEnabled = false
         skillSelectionScope = .all
@@ -928,6 +1232,7 @@ final class AppSettings {
         UserDefaults.standard.removeObject(forKey: Keys.copyTranscriptToClipboardEnabled)
         UserDefaults.standard.removeObject(forKey: Keys.restoreOriginalClipboardAfterPasteEnabled)
         UserDefaults.standard.removeObject(forKey: Keys.transcriptScreenOCREnabled)
+        UserDefaults.standard.removeObject(forKey: Keys.capturedAudioRetentionDays)
         UserDefaults.standard.removeObject(forKey: Keys.agentModeEnabled)
         UserDefaults.standard.removeObject(forKey: Keys.skillsEnabled)
         UserDefaults.standard.removeObject(forKey: Keys.skillSelectionScope)
@@ -944,6 +1249,7 @@ final class AppSettings {
         ElsonLocalConfigStore.shared.save(.default)
         TranscriptHistoryStore.shared.clear()
         transcriptHistory = []
+        purgeCapturedAudioSessions()
         lastOutputSnapshot = nil
         activeFeedbackContext = nil
         didImportWorkingDirectorySourcesThisLaunch = false
@@ -1017,6 +1323,8 @@ final class AppSettings {
         transcriptScreenOCREnabled =
             UserDefaults.standard.object(forKey: Keys.transcriptScreenOCREnabled) as? Bool
             ?? storedConfig.transcriptScreenOCR
+        let storedRetentionDays = UserDefaults.standard.integer(forKey: Keys.capturedAudioRetentionDays)
+        capturedAudioRetentionDays = storedRetentionDays > 0 ? storedRetentionDays : 30
         agentModeEnabled = true
         skillsEnabled = UserDefaults.standard.object(forKey: Keys.skillsEnabled) as? Bool ?? storedConfig.skillsEnabled
         skillSelectionScope =
@@ -1051,6 +1359,7 @@ final class AppSettings {
         print("[SETTINGS] hasRequiredAPIKeys=\(hasRequiredAPIKeys) didCompleteOnboarding=\(didCompleteOnboarding) needsInstallOnboarding=\(needsInstallOnboarding)")
         print("[SETTINGS] ═══════════════════════════════════════════")
         transcriptHistory = TranscriptHistoryStore.shared.load()
+        refreshCapturedAudioSessions()
         lastOutputSnapshot = nil
         activeFeedbackContext = nil
 
@@ -1154,7 +1463,8 @@ final class AppSettings {
         actualRoute: String? = nil,
         routingSource: String? = nil,
         forcedRouteReason: String? = nil,
-        requestId: String? = nil
+        requestId: String? = nil,
+        captureSessionId: String? = nil
     ) {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedText.isEmpty else { return }
@@ -1168,7 +1478,8 @@ final class AppSettings {
             replyMode: replyMode,
             actualRoute: actualRoute,
             routingSource: routingSource,
-            forcedRouteReason: forcedRouteReason
+            forcedRouteReason: forcedRouteReason,
+            captureSessionId: captureSessionId
         )
 
         transcriptHistory.insert(entry, at: 0)
@@ -1256,7 +1567,8 @@ final class AppSettings {
                     role: .user,
                     content: userContent,
                     style: .voiceTranscript,
-                    rawTranscript: rawTranscript
+                    rawTranscript: rawTranscript,
+                    captureSessionId: entry.captureSessionId
                 )
             )
         }

@@ -98,6 +98,7 @@ let package = Package(
                 "Services/AudioRecordingService.swift",
                 "Services/AIService.swift",
                 "Services/KeyboardService.swift",
+                "Services/LocalCapturedAudioSessionStore.swift",
                 "Services/LocalChunkedAudioSession.swift",
                 "Services/LocalChunkedAudioRetryStore.swift",
                 "Services/PermissionCoordinator.swift",

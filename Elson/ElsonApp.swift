@@ -47,6 +47,7 @@ struct ElsonApp: App {
         MenuBarExtra {
             StatusMenuView(recordingService: recordingService)
                 .environment(appSettings)
+                .environment(chatStore)
         } label: {
             Text("E")
                 .font(.system(size: 13, weight: .semibold))

@@ -68,10 +68,12 @@ struct ElsonSettingsView: View {
         .frame(minWidth: 860, minHeight: 700)
         .onAppear {
             syncAPIKeyDraftsFromSettings()
+            appSettings.refreshCapturedAudioSessions()
             refreshSkills(force: true)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             permissionRefreshToken = UUID()
+            appSettings.refreshCapturedAudioSessions()
             refreshSkills(force: true)
         }
         .onChange(of: appSettings.skillsEnabled) { _, enabled in
@@ -122,6 +124,36 @@ struct ElsonSettingsView: View {
                 }
                 .frame(maxWidth: 640)
             }
+
+            if !appSettings.capturedAudioSessions.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("Saved captures")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Stepper(
+                            "\(appSettings.capturedAudioRetentionDays)d",
+                            value: Binding(
+                                get: { appSettings.capturedAudioRetentionDays },
+                                set: { appSettings.capturedAudioRetentionDays = $0 }
+                            ),
+                            in: 1...365
+                        )
+                        .help("Retention")
+                        Button("Purge") {
+                            appSettings.purgeCapturedAudioSessions()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+
+                    ForEach(Array(appSettings.capturedAudioSessions.prefix(12))) { session in
+                        capturedAudioSessionCard(session)
+                    }
+                }
+                .frame(maxWidth: 640)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 8)
@@ -139,6 +171,19 @@ struct ElsonSettingsView: View {
                         .lineLimit(isExpanded ? nil : 3)
 
                     Spacer(minLength: 12)
+
+                    if let captureSessionId = entry.captureSessionId {
+                        Button {
+                            replayCapturedSession(captureSessionId)
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 12, weight: .semibold))
+                                .frame(width: 24, height: 24)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Replay")
+                        .disabled(appSettings.reprocessingCapturedSessionId != nil)
+                    }
 
                     CopyFeedbackButton(text: entry.text)
                 }
@@ -194,6 +239,35 @@ struct ElsonSettingsView: View {
                 }
         } else {
             card
+        }
+    }
+
+    private func capturedAudioSessionCard(_ session: LocalCapturedAudioSessionSnapshot) -> some View {
+        ElsonSettingsCard(title: captureSessionTitle(for: session)) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(captureSessionPreview(for: session))
+                    .font(.system(size: 13))
+                    .foregroundStyle(.primary)
+                    .lineLimit(3)
+
+                HStack(spacing: 8) {
+                    Text(captureSessionMetadata(for: session))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+
+                    Spacer(minLength: 12)
+
+                    Button {
+                        replayCapturedSession(session.sessionId)
+                    } label: {
+                        Label("Replay", systemImage: "arrow.clockwise")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(appSettings.reprocessingCapturedSessionId != nil)
+                }
+            }
         }
     }
 
@@ -719,6 +793,29 @@ struct ElsonSettingsView: View {
         return "Routing: " + parts.joined(separator: " • ")
     }
 
+    private func captureSessionTitle(for session: LocalCapturedAudioSessionSnapshot) -> String {
+        "Capture • \(Self.historyDateFormatter.string(from: session.createdAt))"
+    }
+
+    private func captureSessionPreview(for session: LocalCapturedAudioSessionSnapshot) -> String {
+        let raw = LocalCapturedAudioSessionStore().rawTranscript(sessionId: session.sessionId)
+            ?? session.rawTranscript
+            ?? ""
+        if !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return raw
+        }
+        if let errorMessage = session.errorMessage, !errorMessage.isEmpty {
+            return errorMessage
+        }
+        return "Audio saved."
+    }
+
+    private func captureSessionMetadata(for session: LocalCapturedAudioSessionSnapshot) -> String {
+        let source = session.sourceSurface?.capitalized ?? "Capture"
+        let mode = session.mode == InteractionMode.agent.rawValue ? "Agent" : "Transcript"
+        return [source, mode, session.status.rawValue.capitalized].joined(separator: " • ")
+    }
+
     private func toggleHistoryExpansion(for id: UUID) {
         if expandedHistoryIds.contains(id) {
             expandedHistoryIds.remove(id)
@@ -729,6 +826,10 @@ struct ElsonSettingsView: View {
 
     private func openHistoryThread(_ entry: TranscriptHistoryEntry) {
         appSettings.openHistoryThread(entry, chatStore: chatStore)
+    }
+
+    private func replayCapturedSession(_ sessionId: String) {
+        appSettings.reprocessCapturedSession(sessionId: sessionId, chatStore: chatStore, source: "history_replay")
     }
 
     private var microphonePermissionDetail: String {

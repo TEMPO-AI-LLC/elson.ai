@@ -88,7 +88,12 @@ struct ThreadHistoryWindowView: View {
     private var topChrome: some View {
         ThreadHistoryTopChrome(
             topChromeHeight: topChromeHeight,
-            onNewChat: startNewChat
+            replaySessionId: appSettings.lastReplayableCaptureSessionId,
+            isReprocessing: appSettings.reprocessingCapturedSessionId != nil,
+            onNewChat: startNewChat,
+            onReplay: { sessionId in
+                appSettings.reprocessCapturedSession(sessionId: sessionId, chatStore: chatStore, source: "chat_replay")
+            }
         )
     }
 
@@ -142,6 +147,9 @@ struct ThreadHistoryWindowView: View {
                         routeOverride: routeOverride
                     )
                 }
+            },
+            onReplayVoiceMessage: { sessionId in
+                appSettings.reprocessCapturedSession(sessionId: sessionId, chatStore: chatStore, source: "chat_replay")
             }
         )
     }
@@ -186,6 +194,7 @@ struct ThreadHistoryWindowView: View {
             let session = LocalChunkedAudioSession(
                 recordingService: recordingService,
                 groqAPIKey: appSettings.makeLocalConfig().groqAPIKey,
+                modeHint: (ThreadModeStore.get(threadId: chatStore.thread.id) ?? pendingThreadTarget) == .agent ? .agent : .transcription,
                 requestLogContext: LocalRequestLogContext(
                     requestId: UUID().uuidString,
                     threadId: chatStore.thread.id,
@@ -290,6 +299,7 @@ struct ThreadHistoryWindowView: View {
                 if effectiveThreadId != threadId {
                     chatStore.adoptThreadIdPreservingMessages(newId: effectiveThreadId)
                 }
+                let captureSessionId = finalizedVoiceSession?.persistedSessionId
                 finalizedVoiceSession?.markDeliveryCompleted()
                 chatStore.replaceMessage(
                     id: optimisticMessageId,
@@ -297,6 +307,8 @@ struct ThreadHistoryWindowView: View {
                     style: useVoiceMessageStyle ? .voiceTranscript : .text,
                     rawTranscript: useVoiceMessageStyle ? result.rawTranscript : nil,
                     overrideRawTranscript: useVoiceMessageStyle,
+                    captureSessionId: captureSessionId,
+                    overrideCaptureSessionId: useVoiceMessageStyle && captureSessionId != nil,
                     attachments: userAttachments,
                     showsAttachmentChip: !userAttachments.isEmpty,
                     with: result.transcript.isEmpty ? placeholder : result.transcript
@@ -321,7 +333,7 @@ struct ThreadHistoryWindowView: View {
                 )
                 capturedVoiceSession = nil
                 isSending = false
-                appSettings.recordLastOutput(from: result)
+                appSettings.recordLastOutput(from: result, captureSessionId: captureSessionId)
                 if !result.replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     appSettings.appendTranscriptHistory(
                         text: result.replyText,
@@ -332,7 +344,8 @@ struct ThreadHistoryWindowView: View {
                         actualRoute: result.actualRoute,
                         routingSource: result.routingSource,
                         forcedRouteReason: result.forcedRouteReason,
-                        requestId: result.requestId
+                        requestId: result.requestId,
+                        captureSessionId: captureSessionId
                     )
                 }
                 _ = ClipboardHelper.deliverTranscript(
@@ -398,6 +411,7 @@ struct ThreadHistoryWindowView: View {
                 }
                 if let voiceSession = capturedVoiceSession {
                     finalizedVoiceSession = voiceSession
+                    voiceSession.updateReplayContext(mode: mode, threadId: threadId)
                     if recordingService.isRecording {
                         let audioCaptureStartedAt = Date()
                         let kept = try await voiceSession.stopRecordingDiscardingIfShorterThan(minimumVoiceMessageDuration)
@@ -483,7 +497,8 @@ struct ThreadHistoryWindowView: View {
                                 role: .user,
                                 content: placeholder,
                                 style: .voiceTranscript,
-                                rawTranscript: audioDraft.rawTranscript
+                                rawTranscript: audioDraft.rawTranscript,
+                                captureSessionId: voiceSession.persistedSessionId
                             )
                         )
                         chatStore.beginRun(
@@ -547,6 +562,37 @@ struct ThreadHistoryWindowView: View {
                     "thread_window_send_failed thread_id=\(threadId) thread_mode=\(selectedThreadTarget.rawValue) error=\(error.localizedDescription)"
                 )
                 await MainActor.run {
+                    let failedSessionId = isVoiceMessage ? capturedVoiceSession?.persistedSessionId : nil
+                    let archivedRawTranscript = failedSessionId.flatMap {
+                        LocalCapturedAudioSessionStore().rawTranscript(sessionId: $0)
+                    }
+                    if let failedSessionId {
+                        appSettings.recordCaptureFailure(sessionId: failedSessionId, errorMessage: error.localizedDescription)
+                        let userContent = archivedRawTranscript ?? "Voice message"
+                        if chatStore.containsMessage(id: optimisticMessageId) {
+                            chatStore.replaceMessage(
+                                id: optimisticMessageId,
+                                role: .user,
+                                style: .voiceTranscript,
+                                rawTranscript: archivedRawTranscript,
+                                overrideRawTranscript: true,
+                                captureSessionId: failedSessionId,
+                                overrideCaptureSessionId: true,
+                                with: userContent
+                            )
+                        } else {
+                            chatStore.append(
+                                ChatMessage(
+                                    id: optimisticMessageId,
+                                    role: .user,
+                                    content: userContent,
+                                    style: .voiceTranscript,
+                                    rawTranscript: archivedRawTranscript,
+                                    captureSessionId: failedSessionId
+                                )
+                            )
+                        }
+                    }
                     errorMessage = error.localizedDescription
                     if capturedVoiceSession?.isStopped != true {
                         capturedVoiceSession = nil
@@ -619,7 +665,8 @@ struct ThreadHistoryWindowView: View {
                 insertedText: msg.insertedText,
                 attachments: msg.attachments,
                 showsAttachmentChip: msg.showsAttachmentChip,
-                feedbackSubject: msg.feedbackSubject
+                feedbackSubject: msg.feedbackSubject,
+                captureSessionId: msg.captureSessionId
             )
         }
     }

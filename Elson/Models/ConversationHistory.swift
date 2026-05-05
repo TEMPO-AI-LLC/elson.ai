@@ -29,6 +29,7 @@ struct ConversationThreadMessage: Identifiable, Equatable {
     let attachments: [ChatMessageAttachment]
     let showsAttachmentChip: Bool
     let feedbackSubject: FeedbackSubject?
+    let captureSessionId: String?
 
     init(
         id: String,
@@ -40,7 +41,8 @@ struct ConversationThreadMessage: Identifiable, Equatable {
         insertedText: String? = nil,
         attachments: [ChatMessageAttachment] = [],
         showsAttachmentChip: Bool = false,
-        feedbackSubject: FeedbackSubject? = nil
+        feedbackSubject: FeedbackSubject? = nil,
+        captureSessionId: String? = nil
     ) {
         self.id = id
         self.role = role
@@ -54,5 +56,7 @@ struct ConversationThreadMessage: Identifiable, Equatable {
         self.attachments = attachments
         self.showsAttachmentChip = showsAttachmentChip
         self.feedbackSubject = feedbackSubject
+        let trimmedCaptureSessionId = captureSessionId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.captureSessionId = trimmedCaptureSessionId?.isEmpty == false ? trimmedCaptureSessionId : nil
     }
 }
