@@ -60,6 +60,37 @@ struct LocalRequestLogContext: Sendable {
     }
 }
 
+struct LocalTranscriptionResult: Sendable {
+    let text: String
+    let language: String?
+    let duration: Double?
+    let segments: [GroqTranscriptionSegment]?
+
+    func textDiscardingSegments(endingAtOrBefore cutoff: Double) -> String? {
+        guard let segments else { return nil }
+        let keptSegments = segments.filter { segment in
+            guard let end = segment.end else { return true }
+            return end > cutoff
+        }
+        let keptText = keptSegments
+            .compactMap { $0.text?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !keptText.isEmpty else { return "" }
+
+        let sanitized = GroqTranscriptionSanitizer.sanitize(
+            GroqTranscriptionPayload(
+                text: keptText,
+                language: language,
+                duration: duration,
+                segments: keptSegments
+            )
+        )
+        return sanitized.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 struct WordsCorrectionResult: Hashable, Sendable {
     let patch: MyElsonPatch?
     let reason: String
@@ -180,12 +211,37 @@ struct LocalAIService: Sendable {
         logContext: LocalRequestLogContext? = nil,
         extraMetadata: String = ""
     ) async throws -> String {
+        try await transcribeDetailed(
+            audioURL: audioURL,
+            groqAPIKey: groqAPIKey,
+            logContext: logContext,
+            extraMetadata: extraMetadata
+        ).text
+    }
+
+    func transcribeDetailed(
+        audioURL: URL,
+        groqAPIKey: String,
+        logContext: LocalRequestLogContext? = nil,
+        extraMetadata: String = ""
+    ) async throws -> LocalTranscriptionResult {
         guard !groqAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw LocalAIServiceError.missingGroqKey
         }
 
         let model = ModelConfig.shared.localRuntime.groq.transcription.model
         let startedAt = Date()
+
+        if let speechAnalysis = analyzeSpeechIfPossible(
+            audioURL: audioURL,
+            logContext: logContext,
+            extraMetadata: extraMetadata
+        ), !speechAnalysis.containsSpeech {
+            DebugLog.runtime(
+                "audio_speech_discarded request_id=\(logContext?.requestId ?? "none") thread_id=\(logContext?.threadId ?? "none") reason=\(speechAnalysis.reason ?? "no_speech") duration_s=\(String(format: "%.2f", speechAnalysis.duration)) rms=\(String(format: "%.5f", speechAnalysis.rms)) peak=\(String(format: "%.5f", speechAnalysis.peak)) active_window_ratio=\(String(format: "%.3f", speechAnalysis.activeWindowRatio))"
+            )
+            throw LocalAIServiceError.noSpeechDetected
+        }
 
         let url = URL(string: "https://api.groq.com/openai/v1/audio/transcriptions")!
         var request = URLRequest(url: url)
@@ -244,10 +300,13 @@ struct LocalAIService: Sendable {
             let payload = try JSONDecoder().decode(GroqTranscriptionPayload.self, from: data)
             let sanitized = GroqTranscriptionSanitizer.sanitize(payload)
             let transcript = sanitized.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let removedTrailingText = sanitized.removedTrailingText, let reason = sanitized.reason {
+            if let reason = sanitized.reason {
                 DebugLog.runtime(
-                    "groq_transcription_sanitized request_id=\(logContext?.requestId ?? "none") thread_id=\(logContext?.threadId ?? "none") reason=\(reason) removed_text=\(shortPreview(removedTrailingText))"
+                    "groq_transcription_sanitized request_id=\(logContext?.requestId ?? "none") thread_id=\(logContext?.threadId ?? "none") reason=\(reason) removed_text=\(shortPreview(sanitized.removedTrailingText ?? ""))"
                 )
+            }
+            guard !transcript.isEmpty else {
+                throw LocalAIServiceError.noSpeechDetected
             }
             DebugLog.providerEvent(
                 phase: "success",
@@ -260,7 +319,12 @@ struct LocalAIService: Sendable {
                 ),
                 payloadPreview: transcript
             )
-            return transcript
+            return LocalTranscriptionResult(
+                text: transcript,
+                language: payload.language,
+                duration: payload.duration,
+                segments: payload.segments
+            )
         } catch let error as LocalAIServiceError {
             throw error
         } catch {
@@ -2283,6 +2347,25 @@ struct LocalAIService: Sendable {
         String(data: data, encoding: .utf8) ?? "<non-utf8 body bytes=\(data.count)>"
     }
 
+    private func analyzeSpeechIfPossible(
+        audioURL: URL,
+        logContext: LocalRequestLogContext?,
+        extraMetadata: String
+    ) -> AudioSpeechAnalysis? {
+        do {
+            let analysis = try AudioSpeechDetector.analyze(audioURL: audioURL)
+            DebugLog.runtime(
+                "audio_speech_analysis request_id=\(logContext?.requestId ?? "none") thread_id=\(logContext?.threadId ?? "none") file=\(audioURL.lastPathComponent) duration_s=\(String(format: "%.2f", analysis.duration)) rms=\(String(format: "%.5f", analysis.rms)) peak=\(String(format: "%.5f", analysis.peak)) active_window_ratio=\(String(format: "%.3f", analysis.activeWindowRatio)) contains_speech=\(analysis.containsSpeech) reason=\(analysis.reason ?? "none") \(extraMetadata)"
+            )
+            return analysis
+        } catch {
+            DebugLog.runtimeError(
+                "audio_speech_analysis_failed request_id=\(logContext?.requestId ?? "none") thread_id=\(logContext?.threadId ?? "none") file=\(audioURL.lastPathComponent) error=\(error.localizedDescription)"
+            )
+            return nil
+        }
+    }
+
     private func audioMimeType(for url: URL) -> String {
         switch url.pathExtension.lowercased() {
         case "wav":
@@ -2316,6 +2399,7 @@ enum LocalAIServiceError: LocalizedError {
     case missingGroqKey
     case missingCerebrasKey
     case missingGeminiKey
+    case noSpeechDetected
     case invalidResponse(String)
     case serviceFailure(String, Int, String)
 
@@ -2327,6 +2411,8 @@ enum LocalAIServiceError: LocalizedError {
             return "Missing Cerebras API key."
         case .missingGeminiKey:
             return "Missing Gemini API key."
+        case .noSpeechDetected:
+            return "No speech detected."
         case let .invalidResponse(service):
             return "\(service) returned an invalid response."
         case let .serviceFailure(service, code, text):

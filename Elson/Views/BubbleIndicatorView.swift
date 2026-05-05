@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 struct BubbleIndicatorView: View {
     @Environment(AppSettings.self) private var appSettings
     @Environment(ChatStore.self) private var chatStore
-    let recordingService: AudioRecordingService
+    @ObservedObject var recordingService: AudioRecordingService
     @State private var isDropTargeted = false
 
     var body: some View {

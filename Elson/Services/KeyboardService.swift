@@ -736,8 +736,11 @@ final class KeyboardService {
                     let captureSessionId = session.persistedSessionId
                     let archivedRawTranscript = LocalCapturedAudioSessionStore().rawTranscript(sessionId: captureSessionId)
                     let friendlyMessage = self.userFacingShortcutErrorMessage(error.localizedDescription)
-                    appSettings.recordCaptureFailure(sessionId: captureSessionId, errorMessage: friendlyMessage)
-                    if case .runtime = destination {
+                    let noSpeechDetected = self.isNoSpeechDetectedMessage(friendlyMessage)
+                    if !noSpeechDetected {
+                        appSettings.recordCaptureFailure(sessionId: captureSessionId, errorMessage: friendlyMessage)
+                    }
+                    if case .runtime = destination, !noSpeechDetected {
                         let userContent = archivedRawTranscript ?? "Voice message"
                         if chatStore.containsMessage(id: optimisticMessageId) {
                             chatStore.replaceMessage(
@@ -771,8 +774,13 @@ final class KeyboardService {
                             lastReplyTarget: optimisticTarget.rawValue,
                             markUnread: false
                         )
+                    } else if noSpeechDetected {
+                        if chatStore.containsMessage(id: optimisticMessageId) {
+                            chatStore.removeMessage(id: optimisticMessageId)
+                        }
+                        chatStore.endRun(threadId: threadId)
                     }
-                    appSettings.indicatorState = .error
+                    appSettings.indicatorState = noSpeechDetected ? .idle : .error
                     NotificationHelper.showNotification(
                         title: "Elson.ai",
                         body: friendlyMessage,
@@ -799,10 +807,19 @@ final class KeyboardService {
         if lowercased.contains("missing gemini api key") {
             return "Gemini API key is missing. Add it in Settings > API Keys."
         }
+        if isNoSpeechDetectedMessage(trimmed) || lowercased.contains("no usable transcript") {
+            return "No speech detected."
+        }
         if trimmed.hasPrefix("Error:") {
             return trimmed
         }
         return "Error: \(trimmed)"
+    }
+
+    private func isNoSpeechDetectedMessage(_ message: String) -> Bool {
+        message.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .contains("no speech detected")
     }
 
     private func captureScreenshotDataIfPossible() async throws -> Data {

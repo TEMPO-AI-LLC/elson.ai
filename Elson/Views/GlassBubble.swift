@@ -16,10 +16,6 @@ struct GlassBubble: View {
     let inputLevel: Double
     let action: () -> Void
 
-    @State private var isPulsing = false
-    @State private var phaseA = Double.random(in: 0...(2 * Double.pi))
-    @State private var phaseB = Double.random(in: 0...(2 * Double.pi))
-
     private var glassTint: Color? {
         switch status {
         case .idle:
@@ -38,205 +34,93 @@ struct GlassBubble: View {
     }
 
     var body: some View {
-
         // Button removed - interaction handled by FloatingIndicatorWindow
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
-            let lvl = max(0, min(1, inputLevel))
-
-            // Make "no speech" still visible while listening.
-            let recordingStrength = status == .listening ? max(0.08, lvl) : 0
-
-            // Random-ish movement for purple/green.
-            let a = 0.5 + 0.5 * sin(t * 1.25 + phaseA)
-            let b = 0.5 + 0.5 * sin(t * 0.95 + phaseB)
-
-            let baseScale = isPulsing ? 1.15 : 1.0
-
-            // Keep transcription clearly orange, and error clearly red (not close to orange).
-            let transcriptionOrange = Color(red: 1.0, green: 0.52, blue: 0.12)
+            let level = max(0, min(1, inputLevel))
+            let visibleLevel = max(0.10, level)
+            let pulse = 0.5 + 0.5 * sin(t * 4.2)
             let activeBlue = Color.blue
             let errorRed = Color(red: 1.0, green: 0.08, blue: 0.18)
+            let processingRedOrange = Color(red: 1.0, green: 0.28, blue: 0.12)
 
             let baseColor: Color = {
                 switch status {
                 case .idle:
-                    return Color.gray.opacity(0.24)
+                    return Color.white.opacity(0.18)
                 case .listening:
-                    return activeBlue.opacity(0.46)
-                case .processing:
-                    return transcriptionOrange.opacity(0.46)
-                case .agentProcessing:
-                    return Color.purple.opacity(0.48)
-                case .success:
-                    return Color.green.opacity(0.46)
-                case .agentSuccess:
-                    return Color.purple.opacity(0.50)
+                    return Color.white.opacity(0.24 + 0.18 * visibleLevel)
+                case .processing, .agentProcessing:
+                    return processingRedOrange.opacity(0.30 + 0.20 * pulse)
+                case .success, .agentSuccess:
+                    return Color.green.opacity(0.50)
                 case .error:
-                    return errorRed.opacity(0.58)
+                    return errorRed.opacity(0.56)
                 }
             }()
 
-            let accentColor: Color = {
+            let outerGlow: Color = {
                 switch status {
                 case .listening:
-                    return activeBlue
-                case .agentProcessing, .agentSuccess:
-                    return Color.purple
-                default:
-                    return transcriptionOrange
-                }
-            }()
-
-            let accentOpacity: Double = {
-                switch status {
-                case .listening:
-                    return 0.10 + 0.56 * recordingStrength
-                case .agentProcessing:
-                    return 0.18 + 0.16 * a
-                case .agentSuccess:
-                    return 0.22 + 0.28 * b
-                default:
-                    return 0.0
-                }
-            }()
-
-            let processingAccentOpacity: Double = {
-                switch status {
-                case .processing:
-                    return 0.11 + 0.24 * a
-                case .agentProcessing:
-                    return 0.08 + 0.20 * b
-                default:
-                    return 0.0
-                }
-            }()
-
-            let greenOpacity: Double = {
-                switch status {
-                case .success:
-                    return 0.14 + 0.26 * b
-                case .agentSuccess:
-                    return 0.05 + 0.10 * a
-                case .listening:
-                    return 0.03 * (0.2 + 0.8 * b)
-                case .processing:
-                    return 0.04 * (0.2 + 0.8 * b)
-                case .agentProcessing:
-                    return 0.0
-                case .idle, .error:
-                    return 0.0
+                    return activeBlue.opacity(0.22 + 0.46 * visibleLevel)
+                case .processing, .agentProcessing:
+                    return processingRedOrange.opacity(0.24 + 0.28 * pulse)
+                case .success, .agentSuccess:
+                    return Color.green.opacity(0.34)
+                case .error:
+                    return errorRed.opacity(0.38)
+                case .idle:
+                    return Color.white.opacity(0.10)
                 }
             }()
 
             ZStack {
-                // Base (existing look)
                 Circle()
                     .fill(baseColor)
-                    .blur(radius: 6)
-                    .scaleEffect(baseScale)
-
-                // Accent "sheen" (recording level + agent)
-                Circle()
-                    .stroke(accentColor.opacity(accentOpacity), lineWidth: 6)
                     .blur(radius: 5)
-                    .scaleEffect(1.0 + 0.20 * recordingStrength)
-                    .compositingGroup()
-                    .mask {
-                        Circle()
-                            .inset(by: 3)
-                            .fill(Color.white)
-                            .blur(radius: 1)
-                    }
 
-                // Processing + Success shimmer (soft-clipped so it never reaches the 80x80 window edge)
-                ZStack {
-                    Circle()
-                        .stroke(accentColor.opacity(processingAccentOpacity), lineWidth: 5)
-                        .blur(radius: 7)
-                        .scaleEffect(1.05 + 0.12 * a)
+                Circle()
+                    .stroke(outerGlow, lineWidth: 4)
+                    .blur(radius: 4)
+                    .scaleEffect(status == .listening ? 1.0 + 0.12 * visibleLevel : 1.0 + 0.08 * pulse)
 
-                    Circle()
-                        .stroke(Color.green.opacity(greenOpacity), lineWidth: 5)
-                        .blur(radius: 7)
-                        .scaleEffect(1.03 + 0.12 * b)
-                }
-                .compositingGroup()
-                .mask {
-                    Circle()
-                        .inset(by: 4)
-                        .fill(Color.white)
-                        .blur(radius: 2)
-                }
+                stateGlyph(level: visibleLevel, pulse: pulse)
             }
             .frame(width: 44, height: 44)
             .elsonGlassSurface(.bubble, in: Circle(), tint: glassTint)
         }
-        .onAppear {
-            handleStatusChange(status)
-        }
-        .onChange(of: status) { _, newStatus in
-            handleStatusChange(newStatus)
-        }
     }
 
-    private func handleStatusChange(_ newStatus: Status) {
-        // Reset animations
-        isPulsing = false
-
-        switch newStatus {
+    @ViewBuilder
+    private func stateGlyph(level: Double, pulse: Double) -> some View {
+        switch status {
         case .listening:
-            // Gentle pulse animation for recording
-            withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) {
-                isPulsing = true
-            }
-
-        case .processing:
-            // Gentle pulse for processing (no rotation)
-            withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
-                isPulsing = true
-            }
-
-        case .agentProcessing:
-            withAnimation(.easeInOut(duration: 0.95).repeatForever(autoreverses: true)) {
-                isPulsing = true
-            }
-
-        case .success:
-            // Brief glow effect for success
-            withAnimation(.easeOut(duration: 0.3)) {
-                isPulsing = true
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                withAnimation(.easeIn(duration: 0.2)) {
-                    isPulsing = false
+            HStack(spacing: 4) {
+                ForEach(0..<3, id: \.self) { index in
+                    let emphasis = [0.68, 1.0, 0.78][index]
+                    Capsule()
+                        .fill(index == 1 ? Color.blue : Color.white.opacity(0.88))
+                        .frame(width: 5, height: 9 + 23 * level * emphasis)
+                        .shadow(color: Color.blue.opacity(0.32 + 0.28 * level), radius: 5)
                 }
             }
-
-        case .agentSuccess:
-            withAnimation(.easeOut(duration: 0.2)) {
-                isPulsing = true
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-                withAnimation(.easeIn(duration: 0.2)) {
-                    isPulsing = false
-                }
-            }
-
+            .frame(width: 30, height: 32)
+        case .processing, .agentProcessing:
+            Circle()
+                .fill(Color(red: 1.0, green: 0.28, blue: 0.12).opacity(0.78 + 0.20 * pulse))
+                .frame(width: 18 + 5 * pulse, height: 18 + 5 * pulse)
+        case .success, .agentSuccess:
+            Circle()
+                .fill(Color.green.opacity(0.92))
+                .frame(width: 20, height: 20)
         case .error:
-            // Brief pulse for error
-            withAnimation(.easeOut(duration: 0.2)) {
-                isPulsing = true
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                withAnimation(.easeIn(duration: 0.2)) {
-                    isPulsing = false
-                }
-            }
-
+            Circle()
+                .fill(Color(red: 1.0, green: 0.08, blue: 0.18).opacity(0.92))
+                .frame(width: 20, height: 20)
         case .idle:
-            // No animation for idle
-            break
+            Circle()
+                .fill(Color.white.opacity(0.56))
+                .frame(width: 12, height: 12)
         }
     }
 }

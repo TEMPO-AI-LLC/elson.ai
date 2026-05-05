@@ -365,6 +365,16 @@ final class ChatStore {
     }
 
     @MainActor
+    func removeMessage(id: UUID) {
+        var current = thread
+        let originalCount = current.messages.count
+        current.messages.removeAll { $0.id == id }
+        guard current.messages.count != originalCount else { return }
+        thread = current
+        persistCurrentThread()
+    }
+
+    @MainActor
     func replaceLastUserMessage(with content: String) {
         var current = thread
         guard let index = current.messages.lastIndex(where: { $0.role == .user }) else { return }

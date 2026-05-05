@@ -1,6 +1,6 @@
 import Foundation
 
-struct GroqTranscriptionSegment: Codable, Equatable {
+struct GroqTranscriptionSegment: Codable, Equatable, Sendable {
     let text: String?
     let start: Double?
     let end: Double?
@@ -28,7 +28,11 @@ struct GroqTranscriptionSanitizer {
     static func sanitize(_ payload: GroqTranscriptionPayload) -> Result {
         let transcript = payload.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !transcript.isEmpty else {
-            return Result(text: "", removedTrailingText: nil, reason: nil)
+            return Result(text: "", removedTrailingText: nil, reason: "empty_transcript")
+        }
+
+        if let reason = silenceHallucinationReason(for: transcript) {
+            return Result(text: "", removedTrailingText: transcript, reason: reason)
         }
 
         guard let segments = payload.segments?
@@ -71,6 +75,32 @@ struct GroqTranscriptionSanitizer {
     private static func normalize(_ value: String) -> String {
         value
             .replacingOccurrences(of: "\u{3000}", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func silenceHallucinationReason(for value: String) -> String? {
+        let normalized = normalizeForHallucinationCheck(value)
+        guard !normalized.isEmpty else { return "empty_transcript" }
+        if normalized == "you" {
+            return "blocked_single_you"
+        }
+
+        let words = normalized.split(separator: " ").map(String.init)
+        if words.count >= 4,
+           words.count.isMultiple(of: 2),
+           stride(from: 0, to: words.count, by: 2).allSatisfy({ words[$0] == "thank" && words[$0 + 1] == "you" }) {
+            return "blocked_repeated_thank_you"
+        }
+
+        return nil
+    }
+
+    private static func normalizeForHallucinationCheck(_ value: String) -> String {
+        value
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+            .lowercased()
+            .replacingOccurrences(of: #"[^a-z0-9]+"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 

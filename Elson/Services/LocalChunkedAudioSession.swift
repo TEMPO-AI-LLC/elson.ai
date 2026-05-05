@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 
 enum LocalChunkedAudioSessionError: LocalizedError {
@@ -16,7 +17,7 @@ enum LocalChunkedAudioSessionError: LocalizedError {
         case .notStopped:
             return "Audio session must be stopped before finalizing."
         case .emptyTranscript:
-            return "No usable transcript was produced."
+            return "No speech detected."
         case let .chunkTranscriptionFailed(index, message):
             return "Chunk \(index + 1) transcription failed: \(message)"
         }
@@ -49,6 +50,8 @@ final class LocalChunkedAudioSession {
     struct ChunkRecord {
         let index: Int
         let audioURL: URL
+        let transcriptionAudioURL: URL
+        let transcriptionContextDuration: TimeInterval
         let byteCount: Int
         var status: ChunkStatus
         var transcript: String?
@@ -60,6 +63,7 @@ final class LocalChunkedAudioSession {
     private let recordingService: AudioRecordingService
     private let groqAPIKey: String
     private let chunkDuration: TimeInterval
+    private let transcriptionOverlapDuration: TimeInterval
     private let aiService = LocalAIService()
     private let retryStore: LocalChunkedAudioRetryStore
     private let archiveStore: LocalCapturedAudioSessionStore
@@ -79,7 +83,8 @@ final class LocalChunkedAudioSession {
     init(
         recordingService: AudioRecordingService,
         groqAPIKey: String,
-        chunkDuration: TimeInterval = 30,
+        chunkDuration: TimeInterval = 45,
+        transcriptionOverlapDuration: TimeInterval = 10,
         modeHint: InteractionMode? = nil,
         requestLogContext: LocalRequestLogContext? = nil,
         retryStore: LocalChunkedAudioRetryStore = LocalChunkedAudioRetryStore(),
@@ -88,6 +93,7 @@ final class LocalChunkedAudioSession {
         self.recordingService = recordingService
         self.groqAPIKey = groqAPIKey
         self.chunkDuration = chunkDuration
+        self.transcriptionOverlapDuration = transcriptionOverlapDuration
         self.modeHint = modeHint
         self.requestLogContext = requestLogContext
         self.retryStore = retryStore
@@ -388,9 +394,12 @@ final class LocalChunkedAudioSession {
             )
         }
         let byteCount = chunkByteCount(at: persistedURL)
+        let transcriptionAudio = prepareTranscriptionAudio(index: chunk.index, currentURL: persistedURL)
         chunkRecords[chunk.index] = ChunkRecord(
             index: chunk.index,
             audioURL: persistedURL,
+            transcriptionAudioURL: transcriptionAudio.url,
+            transcriptionContextDuration: transcriptionAudio.contextDuration,
             byteCount: byteCount,
             status: .queued,
             transcript: nil,
@@ -409,7 +418,8 @@ final class LocalChunkedAudioSession {
             do {
                 let transcript = try await self.transcribeChunk(
                     index: chunk.index,
-                    audioURL: persistedURL,
+                    audioURL: transcriptionAudio.url,
+                    overlapDuration: transcriptionAudio.contextDuration,
                     maxAttempts: self.maxChunkTranscriptionAttempts
                 )
                 await MainActor.run {
@@ -491,7 +501,8 @@ final class LocalChunkedAudioSession {
             do {
                 let transcript = try await transcribeChunk(
                     index: record.index,
-                    audioURL: record.audioURL,
+                    audioURL: record.transcriptionAudioURL,
+                    overlapDuration: record.transcriptionContextDuration,
                     maxAttempts: maxChunkTranscriptionAttempts
                 )
                 markChunkCompleted(index: record.index, transcript: transcript)
@@ -502,17 +513,39 @@ final class LocalChunkedAudioSession {
         }
     }
 
-    private func transcribeChunk(index: Int, audioURL: URL, maxAttempts: Int) async throws -> String {
+    private func transcribeChunk(
+        index: Int,
+        audioURL: URL,
+        overlapDuration: TimeInterval,
+        maxAttempts: Int
+    ) async throws -> String {
         var attempt = 0
 
         while true {
             do {
-                return try await aiService.transcribe(
+                let result = try await aiService.transcribeDetailed(
                     audioURL: audioURL,
                     groqAPIKey: groqAPIKey,
                     logContext: requestLogContext,
-                    extraMetadata: "audio_session_id=\(sessionId) chunk_index=\(index)"
+                    extraMetadata: "audio_session_id=\(sessionId) chunk_index=\(index) overlap_s=\(String(format: "%.1f", overlapDuration))"
                 )
+                if overlapDuration > 0 {
+                    if let deduped = result.textDiscardingSegments(endingAtOrBefore: overlapDuration) {
+                        DebugLog.runtime(
+                            "audio_chunk_overlap_segments_discarded audio_session_id=\(sessionId) session_start_at=\(isoTimestamp(startedAt)) chunk_index=\(index) overlap_s=\(String(format: "%.1f", overlapDuration)) original_chars=\(result.text.count) deduped_chars=\(deduped.count)"
+                        )
+                        return deduped
+                    }
+                    DebugLog.runtime(
+                        "audio_chunk_overlap_dedupe_fallback audio_session_id=\(sessionId) session_start_at=\(isoTimestamp(startedAt)) chunk_index=\(index) overlap_s=\(String(format: "%.1f", overlapDuration)) reason=missing_segment_timing"
+                    )
+                }
+                return result.text
+            } catch LocalAIServiceError.noSpeechDetected {
+                DebugLog.runtime(
+                    "audio_chunk_no_speech_discarded audio_session_id=\(sessionId) session_start_at=\(isoTimestamp(startedAt)) chunk_index=\(index)"
+                )
+                return ""
             } catch {
                 attempt += 1
                 if attempt >= maxAttempts {
@@ -524,6 +557,107 @@ final class LocalChunkedAudioSession {
                 )
                 try await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
             }
+        }
+    }
+
+    private func prepareTranscriptionAudio(index: Int, currentURL: URL) -> (url: URL, contextDuration: TimeInterval) {
+        guard transcriptionOverlapDuration > 0,
+              let previousURL = previousOriginalChunkURL(before: index)
+        else {
+            return (currentURL, 0)
+        }
+
+        let outputURL = retryStore.sessionDirectoryURL(sessionId: sessionId)
+            .appendingPathComponent(String(format: "transcription-%04d.wav", index))
+        do {
+            let contextDuration = try writeContextualTranscriptionWAV(
+                previousURL: previousURL,
+                currentURL: currentURL,
+                tailDuration: transcriptionOverlapDuration,
+                outputURL: outputURL
+            )
+            DebugLog.runtime(
+                "audio_chunk_contextual_transcription_audio_created audio_session_id=\(sessionId) session_start_at=\(isoTimestamp(startedAt)) chunk_index=\(index) overlap_s=\(String(format: "%.1f", contextDuration)) file=\(outputURL.lastPathComponent)"
+            )
+            return (outputURL, contextDuration)
+        } catch {
+            DebugLog.runtimeError(
+                "audio_chunk_contextual_transcription_audio_failed audio_session_id=\(sessionId) session_start_at=\(isoTimestamp(startedAt)) chunk_index=\(index) error=\(error.localizedDescription)"
+            )
+            return (currentURL, 0)
+        }
+    }
+
+    private func previousOriginalChunkURL(before index: Int) -> URL? {
+        chunkRecords.values
+            .filter { $0.index < index }
+            .sorted { $0.index > $1.index }
+            .map(\.audioURL)
+            .first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    @discardableResult
+    private func writeContextualTranscriptionWAV(
+        previousURL: URL,
+        currentURL: URL,
+        tailDuration: TimeInterval,
+        outputURL: URL
+    ) throws -> TimeInterval {
+        let previousInput = try AVAudioFile(forReading: previousURL)
+        let currentInput = try AVAudioFile(forReading: currentURL)
+        let format = currentInput.processingFormat
+        let previousFormat = previousInput.processingFormat
+        guard previousFormat.sampleRate == format.sampleRate,
+              previousFormat.channelCount == format.channelCount
+        else {
+            throw NSError(
+                domain: "ai.elson.desktop.audio-context",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Audio chunk formats differ."]
+            )
+        }
+
+        try FileManager.default.createDirectory(
+            at: outputURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        if FileManager.default.fileExists(atPath: outputURL.path) {
+            try FileManager.default.removeItem(at: outputURL)
+        }
+
+        let settings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatLinearPCM),
+            AVSampleRateKey: format.sampleRate,
+            AVNumberOfChannelsKey: Int(format.channelCount),
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsFloatKey: true,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: !format.isInterleaved
+        ]
+        let output = try AVAudioFile(
+            forWriting: outputURL,
+            settings: settings,
+            commonFormat: format.commonFormat,
+            interleaved: format.isInterleaved
+        )
+
+        let requestedTailFrames = AVAudioFramePosition(tailDuration * previousFormat.sampleRate)
+        let tailFrames = min(previousInput.length, max(0, requestedTailFrames))
+        previousInput.framePosition = max(0, previousInput.length - tailFrames)
+        try write(input: previousInput, to: output)
+        try write(input: currentInput, to: output)
+        return previousFormat.sampleRate > 0 ? TimeInterval(tailFrames) / previousFormat.sampleRate : 0
+    }
+
+    private func write(input: AVAudioFile, to output: AVAudioFile) throws {
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: input.processingFormat, frameCapacity: 4096) else {
+            return
+        }
+
+        while input.framePosition < input.length {
+            try input.read(into: buffer)
+            guard buffer.frameLength > 0 else { break }
+            try output.write(from: buffer)
         }
     }
 

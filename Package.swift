@@ -88,6 +88,7 @@ let package = Package(
                 "Runtime/EmbeddedAgentTransport.swift",
                 "Runtime/ElsonLocalConfig.swift",
                 "Runtime/ElsonRuntime.swift",
+                "Runtime/AudioSpeechDetector.swift",
                 "Runtime/GroqTranscriptionSanitizer.swift",
                 "Runtime/LocalAIService.swift",
                 "Runtime/LocalDirectTransport.swift",

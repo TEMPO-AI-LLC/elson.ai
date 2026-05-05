@@ -1274,7 +1274,7 @@ final class ElsonRuntime: @unchecked Sendable {
 
         if let localError = error as? LocalAIServiceError {
             switch localError {
-            case .missingGroqKey, .missingCerebrasKey, .missingGeminiKey:
+            case .missingGroqKey, .missingCerebrasKey, .missingGeminiKey, .noSpeechDetected:
                 return false
             case let .serviceFailure(_, code, _):
                 return code == 429 || code >= 500

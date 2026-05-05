@@ -19,7 +19,7 @@ final class AudioRecordingService: NSObject, ObservableObject {
     private var recordingStartedAt: Date?
 
     private var chunkTimer: Timer?
-    private var chunkDuration: TimeInterval = 30
+    private var chunkDuration: TimeInterval = 45
     private var chunkIndex: Int = 0
     private var isChunkedRecording = false
     private var isRotatingChunk = false
@@ -232,13 +232,13 @@ final class AudioRecordingService: NSObject, ObservableObject {
         return url
     }
 
-    func startChunkedRecording(chunkDuration: TimeInterval = 30, onChunk: @escaping (AudioChunk) -> Void) -> Bool {
+    func startChunkedRecording(chunkDuration: TimeInterval = 45, onChunk: @escaping (AudioChunk) -> Void) -> Bool {
         startChunkedRecording(chunkDuration: chunkDuration, startingIndex: 0, onChunk: onChunk)
     }
 
     /// Resume-capable chunked recording. `startingIndex` lets callers continue indices across pauses so
     /// server-side chunk storage (session_id + chunk_index) doesn't collide.
-    func startChunkedRecording(chunkDuration: TimeInterval = 30, startingIndex: Int, onChunk: @escaping (AudioChunk) -> Void) -> Bool {
+    func startChunkedRecording(chunkDuration: TimeInterval = 45, startingIndex: Int, onChunk: @escaping (AudioChunk) -> Void) -> Bool {
         if Thread.isMainThread {
             return startChunkedRecordingOnMain(chunkDuration: chunkDuration, startingIndex: startingIndex, onChunk: onChunk)
         }

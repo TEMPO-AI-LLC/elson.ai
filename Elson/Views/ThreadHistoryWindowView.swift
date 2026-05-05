@@ -562,12 +562,14 @@ struct ThreadHistoryWindowView: View {
                     "thread_window_send_failed thread_id=\(threadId) thread_mode=\(selectedThreadTarget.rawValue) error=\(error.localizedDescription)"
                 )
                 await MainActor.run {
+                    let friendlyErrorMessage = userFacingSendErrorMessage(error.localizedDescription)
+                    let noSpeechDetected = isNoSpeechDetectedMessage(friendlyErrorMessage)
                     let failedSessionId = isVoiceMessage ? capturedVoiceSession?.persistedSessionId : nil
                     let archivedRawTranscript = failedSessionId.flatMap {
                         LocalCapturedAudioSessionStore().rawTranscript(sessionId: $0)
                     }
-                    if let failedSessionId {
-                        appSettings.recordCaptureFailure(sessionId: failedSessionId, errorMessage: error.localizedDescription)
+                    if let failedSessionId, !noSpeechDetected {
+                        appSettings.recordCaptureFailure(sessionId: failedSessionId, errorMessage: friendlyErrorMessage)
                         let userContent = archivedRawTranscript ?? "Voice message"
                         if chatStore.containsMessage(id: optimisticMessageId) {
                             chatStore.replaceMessage(
@@ -593,7 +595,10 @@ struct ThreadHistoryWindowView: View {
                             )
                         }
                     }
-                    errorMessage = error.localizedDescription
+                    if noSpeechDetected, chatStore.containsMessage(id: optimisticMessageId) {
+                        chatStore.removeMessage(id: optimisticMessageId)
+                    }
+                    errorMessage = friendlyErrorMessage
                     if capturedVoiceSession?.isStopped != true {
                         capturedVoiceSession = nil
                     } else {
@@ -601,7 +606,14 @@ struct ThreadHistoryWindowView: View {
                     }
                     isSending = false
                     chatStore.endRun(threadId: threadId)
-                    appSettings.indicatorState = .error
+                    appSettings.indicatorState = noSpeechDetected ? .idle : .error
+                    if noSpeechDetected {
+                        NotificationHelper.showNotification(
+                            title: "Elson.ai",
+                            body: friendlyErrorMessage,
+                            sound: nil
+                        )
+                    }
                 }
             }
         }
@@ -677,6 +689,20 @@ struct ThreadHistoryWindowView: View {
             return rawTranscript
         }
         return message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func userFacingSendErrorMessage(_ message: String) -> String {
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isNoSpeechDetectedMessage(trimmed) || trimmed.lowercased().contains("no usable transcript") {
+            return "No speech detected."
+        }
+        return trimmed
+    }
+
+    private func isNoSpeechDetectedMessage(_ message: String) -> Bool {
+        message.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .contains("no speech detected")
     }
 
     private func appendToDraft(_ insertedText: String) {

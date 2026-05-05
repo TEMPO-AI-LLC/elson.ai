@@ -796,9 +796,14 @@ final class AppSettings {
                 refreshCapturedAudioSessions()
             } catch {
                 let friendlyMessage = userFacingReplayErrorMessage(error.localizedDescription)
+                let noSpeechDetected = isNoSpeechDetectedMessage(friendlyMessage)
                 let archivedRawTranscript = store.rawTranscript(sessionId: trimmedSessionId)
                 let fallbackContent = archivedRawTranscript ?? "Voice message"
-                if chatStore.containsMessage(id: optimisticMessageId) {
+                if noSpeechDetected {
+                    if chatStore.containsMessage(id: optimisticMessageId) {
+                        chatStore.removeMessage(id: optimisticMessageId)
+                    }
+                } else if chatStore.containsMessage(id: optimisticMessageId) {
                     chatStore.replaceMessage(
                         id: optimisticMessageId,
                         role: .user,
@@ -810,11 +815,20 @@ final class AppSettings {
                         with: fallbackContent
                     )
                 }
-                chatStore.append(ChatMessage(role: .assistant, content: friendlyMessage))
+                if !noSpeechDetected {
+                    chatStore.append(ChatMessage(role: .assistant, content: friendlyMessage))
+                }
                 chatStore.endRun(threadId: threadId)
                 reprocessingCapturedSessionId = nil
-                _ = recordCaptureFailure(sessionId: trimmedSessionId, errorMessage: friendlyMessage)
-                indicatorState = .error
+                if noSpeechDetected {
+                    lastReplayErrorMessage = friendlyMessage
+                    store.markStatus(sessionId: trimmedSessionId, status: .cancelled, errorMessage: friendlyMessage)
+                    indicatorState = .idle
+                    refreshCapturedAudioSessions()
+                } else {
+                    _ = recordCaptureFailure(sessionId: trimmedSessionId, errorMessage: friendlyMessage)
+                    indicatorState = .error
+                }
                 NotificationHelper.showNotification(
                     title: "Elson.ai",
                     body: friendlyMessage,
@@ -901,10 +915,20 @@ final class AppSettings {
 
     private func userFacingReplayErrorMessage(_ message: String) -> String {
         let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowercased = trimmed.lowercased()
+        if isNoSpeechDetectedMessage(trimmed) || lowercased.contains("no usable transcript") {
+            return "No speech detected."
+        }
         if trimmed.hasPrefix("Error:") {
             return trimmed
         }
         return "Error: \(trimmed)"
+    }
+
+    private func isNoSpeechDetectedMessage(_ message: String) -> Bool {
+        message.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .contains("no speech detected")
     }
 
     @discardableResult
