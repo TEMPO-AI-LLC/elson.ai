@@ -27,6 +27,7 @@ struct LocalCapturedAudioSessionSnapshot: Codable, Equatable, Identifiable, Send
     var audioFilePath: String?
     var rawTranscriptFilePath: String?
     var chunkAudioFilePaths: [String]
+    var transcriptChunkTimings: [ElsonTranscriptChunkTimingPayload]?
 
     var id: String { sessionId }
 
@@ -79,7 +80,8 @@ final class LocalCapturedAudioSessionStore: @unchecked Sendable {
             snippetCount: nil,
             audioFilePath: nil,
             rawTranscriptFilePath: nil,
-            chunkAudioFilePaths: []
+            chunkAudioFilePaths: [],
+            transcriptChunkTimings: nil
         )
         try save(&snapshot)
         purgeExpiredSessions()
@@ -141,6 +143,7 @@ final class LocalCapturedAudioSessionStore: @unchecked Sendable {
         sessionId: String,
         rawTranscript: String,
         snippetCount: Int?,
+        transcriptChunkTimings: [ElsonTranscriptChunkTimingPayload] = [],
         status: LocalCapturedAudioSessionStatus = .ready
     ) throws {
         var snapshot = try loadOrCreateFallback(sessionId: sessionId)
@@ -151,6 +154,7 @@ final class LocalCapturedAudioSessionStore: @unchecked Sendable {
         snapshot.rawTranscript = trimmed.isEmpty ? nil : trimmed
         snapshot.rawTranscriptFilePath = rawURL.path
         snapshot.snippetCount = snippetCount
+        snapshot.transcriptChunkTimings = transcriptChunkTimings.isEmpty ? nil : transcriptChunkTimings
         snapshot.status = status
         snapshot.errorMessage = nil
         try save(&snapshot)

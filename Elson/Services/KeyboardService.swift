@@ -558,6 +558,7 @@ final class KeyboardService {
                     requestId: requestId,
                     rawTranscript: audioDraft.rawTranscript,
                     snippetCount: audioDraft.snippetCount,
+                    transcriptChunkTimings: audioDraft.transcriptChunkTimings,
                     mode: runtimeMode ?? .transcription,
                     surface: "shortcut",
                     threadId: threadId,

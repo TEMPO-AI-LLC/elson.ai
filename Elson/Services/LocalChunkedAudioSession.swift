@@ -27,6 +27,7 @@ enum LocalChunkedAudioSessionError: LocalizedError {
 struct LocalChunkedAudioDraft: Sendable {
     let rawTranscript: String
     let snippetCount: Int
+    let transcriptChunkTimings: [ElsonTranscriptChunkTimingPayload]
     let recordingStartedAt: Date?
     let recordingStoppedAt: Date?
     let firstChunkTranscriptionCompletedAt: Date?
@@ -293,8 +294,9 @@ final class LocalChunkedAudioSession {
 
         try await retryIncompleteChunks()
 
-        let orderedSnippets = chunkRecords.values
+        let orderedRecords = chunkRecords.values
             .sorted { $0.index < $1.index }
+        let orderedSnippets = orderedRecords
             .compactMap { record -> String? in
                 let trimmedTranscript = record.transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 return trimmedTranscript.isEmpty ? nil : trimmedTranscript
@@ -315,9 +317,11 @@ final class LocalChunkedAudioSession {
             throw LocalChunkedAudioSessionError.emptyTranscript
         }
 
+        let transcriptChunkTimings = makeTranscriptChunkTimings(from: orderedRecords)
         let draft = LocalChunkedAudioDraft(
             rawTranscript: rawTranscript,
             snippetCount: orderedSnippets.count,
+            transcriptChunkTimings: transcriptChunkTimings,
             recordingStartedAt: startedAt,
             recordingStoppedAt: stoppedAt,
             firstChunkTranscriptionCompletedAt: chunkRecords.values
@@ -330,6 +334,7 @@ final class LocalChunkedAudioSession {
                 sessionId: sessionId,
                 rawTranscript: rawTranscript,
                 snippetCount: orderedSnippets.count,
+                transcriptChunkTimings: transcriptChunkTimings,
                 status: .ready
             )
         } catch {
@@ -687,6 +692,7 @@ final class LocalChunkedAudioSession {
                 sessionId: sessionId,
                 rawTranscript: rawTranscript,
                 snippetCount: orderedSnippets.count,
+                transcriptChunkTimings: makeTranscriptChunkTimings(from: chunkRecords.values.sorted { $0.index < $1.index }),
                 status: state == .stopped ? .ready : .transcribing
             )
         } catch {
@@ -743,6 +749,56 @@ final class LocalChunkedAudioSession {
     private func chunkByteCount(at url: URL) -> Int {
         let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue
         return size ?? 0
+    }
+
+    private func makeTranscriptChunkTimings(from records: [ChunkRecord]) -> [ElsonTranscriptChunkTimingPayload] {
+        var currentStart: TimeInterval = 0
+        var includedSnippetIndex = 0
+
+        return records.map { record in
+            let duration = audioDuration(at: record.audioURL) ?? chunkDuration
+            let audioStart = currentStart
+            let audioEnd = audioStart + max(0, duration)
+            let overlapDuration = min(max(0, record.transcriptionContextDuration), audioStart)
+            let payloadStart = max(0, audioStart - overlapDuration)
+            let payloadEnd = audioEnd
+            let trimmedTranscript = record.transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let snippetIndex: Int?
+            if trimmedTranscript.isEmpty {
+                snippetIndex = nil
+            } else {
+                snippetIndex = includedSnippetIndex
+                includedSnippetIndex += 1
+            }
+
+            currentStart = audioEnd
+            return ElsonTranscriptChunkTimingPayload(
+                index: record.index,
+                transcriptSnippetIndex: snippetIndex,
+                audioStartSeconds: audioStart,
+                audioEndSeconds: audioEnd,
+                asrPayloadStartSeconds: payloadStart,
+                asrPayloadEndSeconds: payloadEnd,
+                overlapStartSeconds: overlapDuration > 0 ? payloadStart : nil,
+                overlapEndSeconds: overlapDuration > 0 ? audioStart : nil,
+                overlapDurationSeconds: overlapDuration,
+                keptTranscriptStartSeconds: audioStart,
+                keptTranscriptEndSeconds: audioEnd
+            )
+        }
+    }
+
+    private func audioDuration(at url: URL) -> TimeInterval? {
+        do {
+            let file = try AVAudioFile(forReading: url)
+            guard file.fileFormat.sampleRate > 0 else { return nil }
+            return TimeInterval(file.length) / file.fileFormat.sampleRate
+        } catch {
+            DebugLog.runtimeError(
+                "audio_chunk_duration_read_failed audio_session_id=\(sessionId) file=\(url.lastPathComponent) error=\(error.localizedDescription)"
+            )
+            return nil
+        }
     }
 
     private func isoTimestamp(_ date: Date?) -> String {

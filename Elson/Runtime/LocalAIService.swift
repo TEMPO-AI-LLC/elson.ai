@@ -29,6 +29,7 @@ struct LocalFormattingRequest: Sendable {
     let rawTranscript: String?
     let enhancedTranscript: String
     let transcriptSnippetCount: Int?
+    let transcriptChunkTimings: [ElsonTranscriptChunkTimingPayload]
     let requestId: String
     let threadId: String
     let mode: String

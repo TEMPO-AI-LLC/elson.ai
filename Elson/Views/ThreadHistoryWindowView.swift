@@ -519,6 +519,7 @@ struct ThreadHistoryWindowView: View {
                         requestId: requestId,
                         rawTranscript: audioDraft.rawTranscript,
                         snippetCount: audioDraft.snippetCount,
+                        transcriptChunkTimings: audioDraft.transcriptChunkTimings,
                         mode: mode,
                         surface: "chat",
                         threadId: threadId,

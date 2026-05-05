@@ -725,6 +725,7 @@ final class AppSettings {
                     requestId: requestId,
                     rawTranscript: rawTranscript,
                     snippetCount: snapshot.snippetCount,
+                    transcriptChunkTimings: snapshot.transcriptChunkTimings ?? [],
                     mode: mode,
                     surface: source,
                     threadId: threadId,

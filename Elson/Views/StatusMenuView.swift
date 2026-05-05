@@ -70,43 +70,29 @@ struct StatusMenuView: View {
     }
 
     private var statusDot: some View {
-        HStack(spacing: 3) {
-            ForEach(0..<3, id: \.self) { index in
-                Capsule()
-                    .fill(statusColor(index: index))
-                    .frame(width: 3, height: statusBarHeight(index: index))
-            }
-        }
-        .frame(width: 18, height: 16)
+        Circle()
+            .fill(statusColor)
+            .frame(width: 10, height: 10)
     }
 
-    private func statusColor(index: Int) -> Color {
+    private var statusColor: Color {
         switch appSettings.indicatorState {
+        case .idle:
+            return .gray
         case .listening:
-            return index == 1 ? .blue : Color.white.opacity(0.82)
-        case .processing, .agentProcessing:
-            return Color(red: 1.0, green: 0.28, blue: 0.12)
-        case .success, .agentSuccess:
+            return .blue
+        case .processing:
+            return .orange
+        case .agentProcessing:
+            return .purple
+        case .success:
             return .green
+        case .agentSuccess:
+            return .purple
         case .error:
             return .red
-        case .idle, .hidden:
-            return .secondary.opacity(0.55)
-        }
-    }
-
-    private func statusBarHeight(index: Int) -> CGFloat {
-        let level = max(0.10, min(1, recordingService.inputLevel))
-        switch appSettings.indicatorState {
-        case .listening:
-            let emphasis = [0.68, 1.0, 0.78][index]
-            return 5 + 11 * level * emphasis
-        case .processing, .agentProcessing:
-            return index == 1 ? 14 : 9
-        case .success, .agentSuccess, .error:
-            return index == 1 ? 13 : 7
-        case .idle, .hidden:
-            return 5
+        case .hidden:
+            return .clear
         }
     }
 

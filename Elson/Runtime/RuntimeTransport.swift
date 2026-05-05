@@ -135,6 +135,34 @@ struct ElsonConversationTurnPayload: Codable, Hashable, Sendable {
     let content: String
 }
 
+struct ElsonTranscriptChunkTimingPayload: Codable, Hashable, Sendable {
+    let index: Int
+    let transcriptSnippetIndex: Int?
+    let audioStartSeconds: Double
+    let audioEndSeconds: Double
+    let asrPayloadStartSeconds: Double
+    let asrPayloadEndSeconds: Double
+    let overlapStartSeconds: Double?
+    let overlapEndSeconds: Double?
+    let overlapDurationSeconds: Double
+    let keptTranscriptStartSeconds: Double
+    let keptTranscriptEndSeconds: Double
+
+    enum CodingKeys: String, CodingKey {
+        case index
+        case transcriptSnippetIndex = "transcript_snippet_index"
+        case audioStartSeconds = "audio_start_seconds"
+        case audioEndSeconds = "audio_end_seconds"
+        case asrPayloadStartSeconds = "asr_payload_start_seconds"
+        case asrPayloadEndSeconds = "asr_payload_end_seconds"
+        case overlapStartSeconds = "overlap_start_seconds"
+        case overlapEndSeconds = "overlap_end_seconds"
+        case overlapDurationSeconds = "overlap_duration_seconds"
+        case keptTranscriptStartSeconds = "kept_transcript_start_seconds"
+        case keptTranscriptEndSeconds = "kept_transcript_end_seconds"
+    }
+}
+
 struct ElsonRequestEnvelope: Codable, Hashable, Sendable {
     let requestId: String
     let threadId: String
@@ -144,6 +172,7 @@ struct ElsonRequestEnvelope: Codable, Hashable, Sendable {
     let rawTranscript: String?
     let enhancedTranscript: String
     let transcriptSnippetCount: Int?
+    let transcriptChunkTimings: [ElsonTranscriptChunkTimingPayload]
     let myElsonMarkdown: String
     let transcriptAgentPrompt: String
     let workingAgentPrompt: String
@@ -167,6 +196,7 @@ struct ElsonRequestEnvelope: Codable, Hashable, Sendable {
         case rawTranscript = "raw_transcript"
         case enhancedTranscript = "enhanced_transcript"
         case transcriptSnippetCount = "transcript_snippet_count"
+        case transcriptChunkTimings = "transcript_chunk_timings"
         case myElsonMarkdown = "my_elson_markdown"
         case transcriptAgentPrompt = "transcript_agent_prompt"
         case workingAgentPrompt = "working_agent_prompt"
@@ -439,6 +469,7 @@ struct PostResponseCorrectionSeed: Hashable, Sendable {
                 rawTranscript: request.rawTranscript,
                 enhancedTranscript: request.enhancedTranscript,
                 transcriptSnippetCount: request.transcriptSnippetCount,
+                transcriptChunkTimings: request.transcriptChunkTimings,
                 myElsonMarkdown: markdown,
                 transcriptAgentPrompt: request.transcriptAgentPrompt,
                 workingAgentPrompt: request.workingAgentPrompt,

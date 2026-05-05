@@ -102,6 +102,9 @@ enum ElsonPromptCatalog {
         input_source: \(envelope.inputSource)
         transcript_snippet_count: \(envelope.transcriptSnippetCount.map { String($0) } ?? "None")
 
+        transcript_chunk_timing:
+        \(transcriptChunkTimingText(envelope.transcriptChunkTimings))
+
         continuation_context:
         \(continuationContextText(envelope.continuationContext))
 
@@ -189,6 +192,9 @@ enum ElsonPromptCatalog {
 
         transcript_snippet_count: \(request.transcriptSnippetCount.map { String($0) } ?? "None")
 
+        transcript_chunk_timing:
+        \(transcriptChunkTimingText(request.transcriptChunkTimings))
+
         raw_transcript:
         \(nonEmptyOrPlaceholder(request.rawTranscript))
 
@@ -222,6 +228,9 @@ enum ElsonPromptCatalog {
         surface: \(envelope.surface)
         input_source: \(envelope.inputSource)
         transcript_snippet_count: \(envelope.transcriptSnippetCount.map { String($0) } ?? "None")
+
+        transcript_chunk_timing:
+        \(transcriptChunkTimingText(envelope.transcriptChunkTimings))
 
         local_date_time: \(envelope.systemContext.localDateTime)
         local_date: \(envelope.systemContext.localDate)
@@ -287,6 +296,9 @@ enum ElsonPromptCatalog {
         mode_hint: \(envelope.modeHint)
         surface: \(envelope.surface)
         input_source: \(envelope.inputSource)
+
+        transcript_chunk_timing:
+        \(transcriptChunkTimingText(envelope.transcriptChunkTimings))
 
         words_glossary:
         \(wordsGlossaryText(from: envelope.myElsonMarkdown))
@@ -515,6 +527,45 @@ enum ElsonPromptCatalog {
             .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: "\n\n")
+    }
+
+    private static func transcriptChunkTimingText(_ timings: [ElsonTranscriptChunkTimingPayload]) -> String {
+        let sortedTimings = timings.sorted { $0.index < $1.index }
+        guard !sortedTimings.isEmpty else { return "None" }
+
+        var lines = [
+            "Use these timing hints only to detect duplicated wording caused by ASR overlap. Do not mention timing in the output."
+        ]
+        for (position, timing) in sortedTimings.enumerated() {
+            let snippet = timing.transcriptSnippetIndex.map { "snippet \($0 + 1)" } ?? "no transcript snippet"
+            let overlap = timing.overlapStartSeconds.flatMap { start in
+                timing.overlapEndSeconds.map { end in
+                    secondsRange(start, end)
+                }
+            } ?? "None"
+            lines.append(
+                "- chunk \(timing.index + 1), \(snippet): audio=\(secondsRange(timing.audioStartSeconds, timing.audioEndSeconds)); asr_payload=\(secondsRange(timing.asrPayloadStartSeconds, timing.asrPayloadEndSeconds)); overlap_context=\(overlap); kept_transcript_audio=\(secondsRange(timing.keptTranscriptStartSeconds, timing.keptTranscriptEndSeconds))"
+            )
+            if timing.overlapDurationSeconds > 0, position > 0 {
+                let previous = sortedTimings[position - 1]
+                lines.append(
+                    "  overlap_check: previous_stable_audio=\(secondsRange(0, timing.asrPayloadStartSeconds)); previous_asr_payload=\(secondsRange(previous.asrPayloadStartSeconds, previous.asrPayloadEndSeconds)); current_asr_payload=\(secondsRange(timing.asrPayloadStartSeconds, timing.asrPayloadEndSeconds))"
+                )
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func secondsRange(_ start: Double, _ end: Double) -> String {
+        "\(secondsText(start))-\(secondsText(end))s"
+    }
+
+    private static func secondsText(_ value: Double) -> String {
+        let rounded = (value * 10).rounded() / 10
+        if rounded.rounded() == rounded {
+            return String(format: "%.0f", rounded)
+        }
+        return String(format: "%.1f", rounded)
     }
 
     private static func sharedPromptReplacements(
