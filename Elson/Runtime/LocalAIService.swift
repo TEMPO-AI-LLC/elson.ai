@@ -239,9 +239,8 @@ struct LocalAIService: Sendable {
             extraMetadata: extraMetadata
         ), !speechAnalysis.containsSpeech {
             DebugLog.runtime(
-                "audio_speech_discarded request_id=\(logContext?.requestId ?? "none") thread_id=\(logContext?.threadId ?? "none") reason=\(speechAnalysis.reason ?? "no_speech") duration_s=\(String(format: "%.2f", speechAnalysis.duration)) rms=\(String(format: "%.5f", speechAnalysis.rms)) peak=\(String(format: "%.5f", speechAnalysis.peak)) active_window_ratio=\(String(format: "%.3f", speechAnalysis.activeWindowRatio))"
+                "audio_speech_low_energy_forwarded request_id=\(logContext?.requestId ?? "none") thread_id=\(logContext?.threadId ?? "none") reason=\(speechAnalysis.reason ?? "no_speech") duration_s=\(String(format: "%.2f", speechAnalysis.duration)) rms=\(String(format: "%.5f", speechAnalysis.rms)) peak=\(String(format: "%.5f", speechAnalysis.peak)) active_window_ratio=\(String(format: "%.3f", speechAnalysis.activeWindowRatio))"
             )
-            throw LocalAIServiceError.noSpeechDetected
         }
 
         let url = URL(string: "https://api.groq.com/openai/v1/audio/transcriptions")!
