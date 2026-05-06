@@ -120,24 +120,35 @@ final class ScreenSnapshotService {
         return granted
     }
 
-    func captureJPEGDataIfPermitted(maxPixelSize: Int? = 1280, quality: CGFloat = 0.78) async throws -> Data {
+    func captureJPEGDataIfPermitted(
+        maxPixelSize: Int? = 1280,
+        quality: CGFloat = 0.78,
+        cropAroundMousePixelRadius: Int? = nil
+    ) async throws -> Data {
         guard hasPermission() else {
             recordFailure("captureJPEGDataIfPermitted(): permission denied")
             throw ScreenSnapshotError.permissionDenied
         }
 
-        let image = try await captureFullScreenImage()
+        let captureRect = fullScreenCaptureRect()
+        let image = try await captureFullScreenImage(captureRect: captureRect)
 
         guard let image else {
             recordFailure("captureJPEGDataIfPermitted(): SCScreenshotManager returned nil")
             throw ScreenSnapshotError.captureFailed
         }
 
+        let croppedImage = cropAroundMouseIfNeeded(
+            image: image,
+            captureRect: captureRect,
+            pixelRadius: cropAroundMousePixelRadius
+        ) ?? image
+
         let outputImage: CGImage
-        if let maxPixelSize, let downscaled = downscaleIfNeeded(image: image, maxPixelSize: maxPixelSize) {
+        if let maxPixelSize, let downscaled = downscaleIfNeeded(image: croppedImage, maxPixelSize: maxPixelSize) {
             outputImage = downscaled
         } else {
-            outputImage = image
+            outputImage = croppedImage
         }
 
         do {
@@ -170,13 +181,7 @@ final class ScreenSnapshotService {
         return try? Data(contentsOf: url)
     }
 
-    private func captureFullScreenImage() async throws -> CGImage? {
-        let captureRect = NSScreen.screens
-            .map(\.frame)
-            .reduce(CGRect.null) { partial, frame in
-                partial.union(frame)
-            }
-
+    private func captureFullScreenImage(captureRect: CGRect) async throws -> CGImage? {
         guard !captureRect.isNull, !captureRect.isEmpty else {
             return nil
         }
@@ -194,6 +199,14 @@ final class ScreenSnapshotService {
         }
 
         return try await captureLegacyFullScreenImage(captureRect: captureRect)
+    }
+
+    private func fullScreenCaptureRect() -> CGRect {
+        NSScreen.screens
+            .map(\.frame)
+            .reduce(CGRect.null) { partial, frame in
+                partial.union(frame)
+            }
     }
 
     private func encodeJPEG(image: CGImage, quality: CGFloat) throws -> Data {
@@ -250,6 +263,49 @@ final class ScreenSnapshotService {
         context.interpolationQuality = .high
         context.draw(image, in: CGRect(x: 0, y: 0, width: newWidth, height: newHeight))
         return context.makeImage()
+    }
+
+    private func cropAroundMouseIfNeeded(
+        image: CGImage,
+        captureRect: CGRect,
+        pixelRadius: Int?
+    ) -> CGImage? {
+        guard let pixelRadius, pixelRadius > 0 else { return nil }
+        guard !captureRect.isNull, !captureRect.isEmpty else { return nil }
+
+        let imageWidth = image.width
+        let imageHeight = image.height
+        guard imageWidth > 0, imageHeight > 0 else { return nil }
+
+        let cropWidth = min(imageWidth, pixelRadius * 2)
+        let cropHeight = min(imageHeight, pixelRadius * 2)
+        guard cropWidth > 0, cropHeight > 0 else { return nil }
+
+        let scaleX = CGFloat(imageWidth) / captureRect.width
+        let scaleY = CGFloat(imageHeight) / captureRect.height
+        guard scaleX.isFinite, scaleY.isFinite, scaleX > 0, scaleY > 0 else { return nil }
+
+        let mouseLocation = NSEvent.mouseLocation
+        let clampedMouseX = min(max(mouseLocation.x, captureRect.minX), captureRect.maxX)
+        let clampedMouseY = min(max(mouseLocation.y, captureRect.minY), captureRect.maxY)
+
+        let centerX = (clampedMouseX - captureRect.minX) * scaleX
+        let centerY = (captureRect.maxY - clampedMouseY) * scaleY
+        let halfWidth = CGFloat(cropWidth) / 2
+        let halfHeight = CGFloat(cropHeight) / 2
+
+        let maxOriginX = CGFloat(imageWidth - cropWidth)
+        let maxOriginY = CGFloat(imageHeight - cropHeight)
+        let originX = min(max(centerX - halfWidth, 0), maxOriginX)
+        let originY = min(max(centerY - halfHeight, 0), maxOriginY)
+        let cropRect = CGRect(
+            x: originX.rounded(.down),
+            y: originY.rounded(.down),
+            width: CGFloat(cropWidth),
+            height: CGFloat(cropHeight)
+        )
+
+        return image.cropping(to: cropRect)
     }
 
     private func captureLegacyFullScreenImage(captureRect: CGRect) async throws -> CGImage? {

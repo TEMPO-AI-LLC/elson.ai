@@ -12,9 +12,7 @@
     "vision": "gemini-3.1-flash-lite-preview"
   },
   "cerebras": {
-    "classification": "zai-glm-4.7",
-    "enhancement": "gpt-oss-120b",
-    "working": "zai-glm-4.7"
+    "enhancement": "gpt-oss-120b"
   },
   "local_runtime": {
     "groq": {
@@ -53,7 +51,7 @@
     },
     "cerebras": {
       "validation": {
-        "model": "zai-glm-4.7",
+        "model": "gpt-oss-120b",
         "temperature": 0,
         "top_p": 1
       },
@@ -62,7 +60,7 @@
         "temperature": 0.5
       },
       "working_agent": {
-        "model": "zai-glm-4.7",
+        "model": "gpt-oss-120b",
         "temperature": 0.1
       }
     }

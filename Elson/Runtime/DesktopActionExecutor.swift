@@ -7,7 +7,11 @@ enum DesktopActionExecutor {
         for action in actions {
             switch action.type {
             case "capture_screenshot":
-                if let data = try? await ScreenSnapshotService.shared.captureJPEGDataIfPermitted(maxPixelSize: 1280, quality: 0.7) {
+                if let data = try? await ScreenSnapshotService.shared.captureJPEGDataIfPermitted(
+                    maxPixelSize: appSettings.screenshotCaptureMaxPixelSize,
+                    quality: 0.7,
+                    cropAroundMousePixelRadius: appSettings.screenshotCaptureCropAroundMousePixelRadius
+                ) {
                     appSettings.pendingScreenshotJPEGData = [data]
                     notes.append("Captured screenshot locally.")
                 } else {

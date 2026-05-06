@@ -24,9 +24,7 @@ struct ProviderModelSet: Codable {
 }
 
 struct CerebrasModelSet: Codable {
-    let classification: String
     let enhancement: String
-    let working: String
 }
 
 struct GroqLocalRuntimeModelSet: Codable {
@@ -271,9 +269,7 @@ final class ModelConfig: @unchecked Sendable {
             vision: "gemini-3.1-flash-lite-preview"
         ),
         cerebras: CerebrasModelSet(
-            classification: "zai-glm-4.7",
-            enhancement: "gpt-oss-120b",
-            working: "zai-glm-4.7"
+            enhancement: "gpt-oss-120b"
         ),
         localRuntime: LocalRuntimeModelConfig(
             groq: GroqLocalRuntimeModelSet(
@@ -324,7 +320,7 @@ final class ModelConfig: @unchecked Sendable {
             ),
             cerebras: CerebrasLocalRuntimeModelSet(
                 validation: ModelStageConfig(
-                    model: "zai-glm-4.7",
+                    model: "gpt-oss-120b",
                     temperature: 0,
                     topP: 1,
                     topK: nil,
@@ -338,7 +334,7 @@ final class ModelConfig: @unchecked Sendable {
                     thinkingLevel: nil
                 ),
                 workingAgent: ModelStageConfig(
-                    model: "zai-glm-4.7",
+                    model: "gpt-oss-120b",
                     temperature: 0.1,
                     topP: nil,
                     topK: nil,

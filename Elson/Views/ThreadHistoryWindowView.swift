@@ -650,7 +650,11 @@ struct ThreadHistoryWindowView: View {
     }
 
     private func captureScreenshotDataIfPossible() async throws -> Data {
-        try await ScreenSnapshotService.shared.captureJPEGDataIfPermitted(maxPixelSize: 1280, quality: 0.7)
+        try await ScreenSnapshotService.shared.captureJPEGDataIfPermitted(
+            maxPixelSize: appSettings.screenshotCaptureMaxPixelSize,
+            quality: 0.7,
+            cropAroundMousePixelRadius: appSettings.screenshotCaptureCropAroundMousePixelRadius
+        )
     }
 
     private func mapLocalTailMessages(threadId: String) -> [ConversationThreadMessage] {

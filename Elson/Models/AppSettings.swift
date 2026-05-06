@@ -72,6 +72,7 @@ final class AppSettings {
         static let copyTranscriptToClipboardEnabled = "copy_transcript_to_clipboard_enabled"
         static let restoreOriginalClipboardAfterPasteEnabled = "restore_original_clipboard_after_paste_enabled"
         static let transcriptScreenOCREnabled = "transcript_screen_ocr_enabled"
+        static let fullScreenScreenshotCaptureEnabled = "full_screen_screenshot_capture_enabled"
         static let capturedAudioRetentionDays = LocalCapturedAudioSessionStore.retentionDaysDefaultsKey
         static let agentModeEnabled = "agent_mode_enabled"
         static let skillsEnabled = "skills_enabled"
@@ -236,6 +237,24 @@ final class AppSettings {
             )
             persistLocalConfig()
         }
+    }
+
+    var fullScreenScreenshotCaptureEnabled: Bool = false {
+        didSet {
+            UserDefaults.standard.set(
+                fullScreenScreenshotCaptureEnabled,
+                forKey: Keys.fullScreenScreenshotCaptureEnabled
+            )
+            persistLocalConfig()
+        }
+    }
+
+    var screenshotCaptureMaxPixelSize: Int {
+        fullScreenScreenshotCaptureEnabled ? 1280 : 300
+    }
+
+    var screenshotCaptureCropAroundMousePixelRadius: Int? {
+        fullScreenScreenshotCaptureEnabled ? nil : 150
     }
 
     var capturedAudioRetentionDays: Int = 30 {
@@ -443,6 +462,7 @@ final class AppSettings {
             copyTranscriptToClipboard: copyTranscriptToClipboardEnabled,
             restoreOriginalClipboardAfterPaste: restoreOriginalClipboardAfterPasteEnabled,
             transcriptScreenOCR: transcriptScreenOCREnabled,
+            fullScreenScreenshotCapture: fullScreenScreenshotCaptureEnabled,
             listeningMode: listeningMode,
             transcriptShortcut: transcriptShortcut,
             agentShortcut: agentShortcut,
@@ -1218,6 +1238,7 @@ final class AppSettings {
         copyTranscriptToClipboardEnabled = false
         restoreOriginalClipboardAfterPasteEnabled = false
         transcriptScreenOCREnabled = true
+        fullScreenScreenshotCaptureEnabled = false
         capturedAudioRetentionDays = 30
         agentModeEnabled = true
         skillsEnabled = false
@@ -1257,6 +1278,7 @@ final class AppSettings {
         UserDefaults.standard.removeObject(forKey: Keys.copyTranscriptToClipboardEnabled)
         UserDefaults.standard.removeObject(forKey: Keys.restoreOriginalClipboardAfterPasteEnabled)
         UserDefaults.standard.removeObject(forKey: Keys.transcriptScreenOCREnabled)
+        UserDefaults.standard.removeObject(forKey: Keys.fullScreenScreenshotCaptureEnabled)
         UserDefaults.standard.removeObject(forKey: Keys.capturedAudioRetentionDays)
         UserDefaults.standard.removeObject(forKey: Keys.agentModeEnabled)
         UserDefaults.standard.removeObject(forKey: Keys.skillsEnabled)
@@ -1348,6 +1370,9 @@ final class AppSettings {
         transcriptScreenOCREnabled =
             UserDefaults.standard.object(forKey: Keys.transcriptScreenOCREnabled) as? Bool
             ?? storedConfig.transcriptScreenOCR
+        fullScreenScreenshotCaptureEnabled =
+            UserDefaults.standard.object(forKey: Keys.fullScreenScreenshotCaptureEnabled) as? Bool
+            ?? storedConfig.fullScreenScreenshotCapture
         let storedRetentionDays = UserDefaults.standard.integer(forKey: Keys.capturedAudioRetentionDays)
         capturedAudioRetentionDays = storedRetentionDays > 0 ? storedRetentionDays : 30
         agentModeEnabled = true

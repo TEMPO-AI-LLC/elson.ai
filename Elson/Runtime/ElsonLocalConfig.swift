@@ -155,6 +155,7 @@ struct ElsonLocalConfig: Codable, Equatable {
     var copyTranscriptToClipboard: Bool
     var restoreOriginalClipboardAfterPaste: Bool
     var transcriptScreenOCR: Bool
+    var fullScreenScreenshotCapture: Bool
     var listeningMode: ListeningMode
     var transcriptShortcut: RecordingShortcut
     var agentShortcut: RecordingShortcut
@@ -179,6 +180,7 @@ struct ElsonLocalConfig: Codable, Equatable {
         case copyTranscriptToClipboard = "copy_transcript_to_clipboard"
         case restoreOriginalClipboardAfterPaste = "restore_original_clipboard_after_paste"
         case transcriptScreenOCR = "transcript_screen_ocr"
+        case fullScreenScreenshotCapture = "full_screen_screenshot_capture"
         case listeningMode = "listening_mode"
         case transcriptShortcut = "transcript_shortcut"
         case agentShortcut = "agent_shortcut"
@@ -204,6 +206,7 @@ struct ElsonLocalConfig: Codable, Equatable {
         copyTranscriptToClipboard: false,
         restoreOriginalClipboardAfterPaste: false,
         transcriptScreenOCR: true,
+        fullScreenScreenshotCapture: false,
         listeningMode: .hold,
         transcriptShortcut: .default,
         agentShortcut: .feedbackDefault,
@@ -229,6 +232,7 @@ struct ElsonLocalConfig: Codable, Equatable {
         copyTranscriptToClipboard: Bool,
         restoreOriginalClipboardAfterPaste: Bool,
         transcriptScreenOCR: Bool,
+        fullScreenScreenshotCapture: Bool,
         listeningMode: ListeningMode,
         transcriptShortcut: RecordingShortcut,
         agentShortcut: RecordingShortcut,
@@ -252,6 +256,7 @@ struct ElsonLocalConfig: Codable, Equatable {
         self.copyTranscriptToClipboard = copyTranscriptToClipboard
         self.restoreOriginalClipboardAfterPaste = restoreOriginalClipboardAfterPaste
         self.transcriptScreenOCR = transcriptScreenOCR
+        self.fullScreenScreenshotCapture = fullScreenScreenshotCapture
         self.listeningMode = listeningMode
         self.transcriptShortcut = transcriptShortcut
         self.agentShortcut = agentShortcut
@@ -288,6 +293,9 @@ struct ElsonLocalConfig: Codable, Equatable {
             try container.decodeIfPresent(Bool.self, forKey: .restoreOriginalClipboardAfterPaste)
             ?? fallback.restoreOriginalClipboardAfterPaste
         transcriptScreenOCR = try container.decodeIfPresent(Bool.self, forKey: .transcriptScreenOCR) ?? fallback.transcriptScreenOCR
+        fullScreenScreenshotCapture =
+            try container.decodeIfPresent(Bool.self, forKey: .fullScreenScreenshotCapture)
+            ?? fallback.fullScreenScreenshotCapture
         listeningMode = try container.decodeIfPresent(ListeningMode.self, forKey: .listeningMode) ?? fallback.listeningMode
         let legacyRecordingShortcut = try container.decodeIfPresent(RecordingShortcut.self, forKey: .recordingShortcut)
             ?? fallback.recordingShortcut

@@ -824,7 +824,13 @@ final class KeyboardService {
     }
 
     private func captureScreenshotDataIfPossible() async throws -> Data {
-        try await ScreenSnapshotService.shared.captureJPEGDataIfPermitted(maxPixelSize: 1280, quality: 0.7)
+        let maxPixelSize = appSettings?.screenshotCaptureMaxPixelSize ?? 300
+        let cropRadius = appSettings?.screenshotCaptureCropAroundMousePixelRadius ?? 150
+        return try await ScreenSnapshotService.shared.captureJPEGDataIfPermitted(
+            maxPixelSize: maxPixelSize,
+            quality: 0.7,
+            cropAroundMousePixelRadius: cropRadius
+        )
     }
 
     private func startShortcutScreenContextPrefetch(

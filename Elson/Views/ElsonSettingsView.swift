@@ -35,6 +35,15 @@ struct ElsonSettingsView: View {
     @State private var isSkillsListExpanded = false
     @State private var skillSearchQuery = ""
 
+    private var debugLogsPath: String {
+        DebugLog.logsDirectoryURL().path
+    }
+
+    private var debugTailCommand: String {
+        let escapedLogsPath = debugLogsPath.replacingOccurrences(of: "\"", with: "\\\"")
+        return "tail -f \"\(escapedLogsPath)/llm.log\" \"\(escapedLogsPath)/runtime.log\""
+    }
+
     private static let historyDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
@@ -530,6 +539,11 @@ struct ElsonSettingsView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                Toggle("Capture full screen for screenshot context", isOn: $appSettings.fullScreenScreenshotCaptureEnabled)
+                Text("Default captures a 300 x 300 area around the pointer. Full screen may increase AI cost.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Toggle("Mute system audio during recording", isOn: $appSettings.muteSystemAudioDuringRecording)
             }
 
@@ -677,14 +691,9 @@ struct ElsonSettingsView: View {
             }
 
             ElsonSettingsCard(title: "Debug") {
-                Text(DebugLog.logsDirectoryURL().path)
+                Text(debugLogsPath)
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .textSelection(.enabled)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                Text("Tail logs with `tail -f ~/Library/Application Support/Elson/Logs/llm.log` or `runtime.log`.")
-                    .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -692,6 +701,28 @@ struct ElsonSettingsView: View {
                     DebugLog.openLogsFolder()
                 }
                 .buttonStyle(.bordered)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Copy this into the Terminal")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(debugTailCommand)
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .textSelection(.enabled)
+                            .foregroundStyle(.primary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        CopyFeedbackButton(text: debugTailCommand)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color.primary.opacity(0.04))
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             ElsonSettingsCard(title: "App") {
