@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f6f1e8" />
+    <title>Elson AI</title>
+    <meta
+      name="description"
+      content="Elson AI is a local-first macOS voice assistant for fast dictation, transcript cleanup, contextual replies, and paste-first desktop workflows."
+    />
+    <meta property="og:title" content="Elson AI" />
+    <meta
+      property="og:description"
+      content="A local-first macOS voice assistant for fast dictation, transcript cleanup, contextual replies, and paste-first desktop workflows."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="assets/readme/transcript-mode.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="Elson AI home">
+        <span class="brand-mark">E</span>
+        <span>Elson AI</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary navigation">
+        <a href="#install">Install</a>
+        <a href="#modes">Modes</a>
+        <a href="https://github.com/TEMPO-AI-LLC/elson.ai" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Native macOS voice assistant</p>
+          <h1>Fast dictation, cleanup, and contextual replies on your Mac.</h1>
+          <p class="hero-text">
+            Elson turns rough speech into paste-ready text, drafts replies with screen context, and keeps your workflow local-first and under your control.
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" href="#install">Install Elson</a>
+            <a class="button secondary" href="https://github.com/TEMPO-AI-LLC/elson.ai" target="_blank" rel="noopener">View source</a>
+          </div>
+        </div>
+        <figure class="hero-media">
+          <img src="assets/readme/transcript-mode.png" alt="Elson transcript mode on macOS" />
+        </figure>
+      </section>
+
+      <section class="proof-strip" aria-label="Product principles">
+        <div>
+          <strong>Transcript mode</strong>
+          <span>Dictate, clean up, rewrite, translate, paste.</span>
+        </div>
+        <div>
+          <strong>Agent mode</strong>
+          <span>Draft replies and use screen context when asked.</span>
+        </div>
+        <div>
+          <strong>Local-first</strong>
+          <span>History, config, memory, and prompts live on your Mac.</span>
+        </div>
+      </section>
+
+      <section id="install" class="install-section">
+        <div class="section-copy">
+          <p class="eyebrow">Install</p>
+          <h2>One command, then hold to talk.</h2>
+          <p>
+            The installer picks the right build for your Mac, installs Elson, and opens the app. Works on macOS 15+.
+          </p>
+        </div>
+        <div class="terminal" role="group" aria-label="Install command">
+          <code>curl -fsSL https://raw.githubusercontent.com/TEMPO-AI-LLC/elson.ai/main/github-install.sh | bash</code>
+        </div>
+      </section>
+
+      <section id="modes" class="mode-grid" aria-label="Elson modes">
+        <article class="mode-card">
+          <img src="assets/readme/agent-mode.png" alt="Elson agent mode for contextual replies" />
+          <div>
+            <p class="eyebrow">Agent</p>
+            <h2>Reply with context.</h2>
+            <p>Ask Elson to draft the email, Slack answer, or desktop response you need. It stays paste-first, so nothing sends without you.</p>
+          </div>
+        </article>
+
+        <article class="mode-card reverse">
+          <img src="assets/readme/recording-settings.png" alt="Elson recording settings" />
+          <div>
+            <p class="eyebrow">Transcript</p>
+            <h2>Speak once. Paste clean text.</h2>
+            <p>Hold to record, release to stop, then let Elson turn rough dictation into clean writing for the active app.</p>
+          </div>
+        </article>
+      </section>
+
+      <section class="feature-band">
+        <div class="feature-copy">
+          <p class="eyebrow">Built for desktop work</p>
+          <h2>Not a black box, not another destination app.</h2>
+          <p>
+            Elson is a Swift and SwiftUI app with inspectable source, configurable prompts, local history, skills, and persistent Elson.md memory.
+          </p>
+        </div>
+        <div class="feature-gallery">
+          <img src="assets/readme/skills-settings.png" alt="Elson skills settings" />
+          <img src="assets/readme/history-view.png" alt="Elson history view" />
+          <img src="assets/readme/elson-memory-view.png" alt="Elson local memory view" />
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>© 2026 TEMPO AI LLC</span>
+      <a href="https://github.com/TEMPO-AI-LLC/elson.ai" target="_blank" rel="noopener">GitHub</a>
+    </footer>
+  </body>
+</html>
