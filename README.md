@@ -1,4 +1,4 @@
-# Elson.AI - Open-source Wispr Flow alternative for macOS.
+# OpenWispr - Elson.ai the Opensource Wispr Alternative
 
 
 Elson is a local-first macOS voice assistant for ultra-fast dictation, transcript cleanup, screenshot-aware replies, and paste-first desktop workflows.
