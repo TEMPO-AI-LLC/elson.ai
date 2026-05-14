@@ -19,7 +19,7 @@ struct AgentAttachment: Identifiable, Hashable {
     }
 }
 
-enum InteractionMode: String, Codable, CaseIterable {
+enum InteractionMode: String, Codable, CaseIterable, Sendable {
     case transcription
     case agent
 }

@@ -394,8 +394,8 @@ final class KeyboardService {
             }
             DebugLog.requestMilestone(milestoneSnapshot, name: "recording_started")
 
-            let shouldPrefetchScreenContext = config.runtimeMode != .local || mode == .agent
-            if case .runtime = destination, shouldPrefetchScreenContext, ScreenSnapshotService.shared.hasPermission() {
+            let processingProfile = LocalProcessingRouter.contextProfile(for: config, mode: mode)
+            if case .runtime = destination, processingProfile.shouldPrefetchScreenContext, ScreenSnapshotService.shared.hasPermission() {
                 Task { [weak self] in
                     guard let self else { return }
                     guard let captured = try? await self.captureScreenshotDataIfPossible() else { return }
@@ -405,6 +405,7 @@ final class KeyboardService {
                         self.startShortcutScreenContextPrefetch(
                             requestId: session.requestId ?? UUID().uuidString,
                             threadId: targetThreadId,
+                            mode: mode,
                             config: appSettings.makeLocalConfig(),
                             attachments: appSettings.pendingAttachments,
                             screenshotData: [captured]
@@ -628,13 +629,14 @@ final class KeyboardService {
 
             let screenContextTask = Task<([Data], (context: LocalScreenContext, durationMS: Int)?), Error> { @MainActor [weak self] in
                 guard let self else { return (job.screenshotData, nil) }
+                let mode = job.runtimeMode ?? .transcription
+                let processingProfile = LocalProcessingRouter.contextProfile(for: job.config, mode: mode)
+                guard processingProfile.shouldPrefetchScreenContext else {
+                    return ([], nil)
+                }
                 var screenshotData = job.screenshotData
                 if screenshotData.isEmpty, let captured = try? await self.captureScreenshotDataIfPossible() {
                     screenshotData = [captured]
-                }
-                let shouldResolveScreenContext = job.config.runtimeMode != .local || job.runtimeMode == .agent
-                guard shouldResolveScreenContext else {
-                    return (screenshotData, nil)
                 }
                 if let prefetched = await job.screenContextPrefetchTask?.value {
                     return (screenshotData, prefetched)
@@ -643,6 +645,7 @@ final class KeyboardService {
                     requestId: job.requestId,
                     surface: "shortcut",
                     threadId: job.threadId,
+                    mode: mode,
                     config: job.config,
                     attachments: job.pendingAttachments,
                     screenshotJPEGData: screenshotData
@@ -1013,12 +1016,17 @@ final class KeyboardService {
     private func startShortcutScreenContextPrefetch(
         requestId: String,
         threadId: String,
+        mode: InteractionMode,
         config: ElsonLocalConfig,
         attachments: [AgentAttachment],
         screenshotData: [Data]
     ) {
         shortcutScreenContextPrefetchTask?.cancel()
-        _ = config
+        let processingProfile = LocalProcessingRouter.contextProfile(for: config, mode: mode)
+        guard processingProfile.shouldPrefetchScreenContext else {
+            shortcutScreenContextPrefetchTask = nil
+            return
+        }
         guard !screenshotData.isEmpty else {
             shortcutScreenContextPrefetchTask = nil
             return
@@ -1030,6 +1038,7 @@ final class KeyboardService {
                     requestId: requestId,
                     surface: "shortcut",
                     threadId: threadId,
+                    mode: mode,
                     config: config,
                     attachments: attachments,
                     screenshotJPEGData: screenshotData

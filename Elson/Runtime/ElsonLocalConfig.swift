@@ -134,7 +134,7 @@ struct RecordingShortcut: Codable, Equatable, Hashable {
     }
 }
 
-enum RuntimeMode: String, Codable, CaseIterable {
+enum RuntimeMode: String, Codable, CaseIterable, Sendable {
     case local
     case hosted
 

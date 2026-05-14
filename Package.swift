@@ -104,6 +104,7 @@ let package = Package(
                 "Runtime/GroqTranscriptionSanitizer.swift",
                 "Runtime/LocalAIService.swift",
                 "Runtime/LocalDirectTransport.swift",
+                "Runtime/ProcessingPipelineProfile.swift",
                 "Runtime/LocalProcessingServices.swift",
                 "Runtime/MyElsonMemory.swift",
                 "Runtime/PostResponseCorrectionCoordinator.swift",

@@ -306,52 +306,38 @@ final class LocalGemmaService {
     }
 
     func runTranscriptAgent(request envelope: ElsonRequestEnvelope) async throws -> String {
+        try await enhanceTranscript(request: envelope)
+    }
+
+    func enhanceTranscript(request envelope: ElsonRequestEnvelope) async throws -> String {
         let fallbackTranscript = (envelope.rawTranscript ?? envelope.enhancedTranscript)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !fallbackTranscript.isEmpty else { return "" }
 
-        let systemPrompt = ElsonPromptCatalog.transcriptAgentSystemPrompt(
-            transcriptAgentPrompt: envelope.transcriptAgentPrompt,
-            includeConversationHistory: envelope.surface == "chat"
-        )
-        let userPrompt = ElsonPromptCatalog.transcriptAgentUserPrompt(
-            envelope: envelope,
-            attachmentSummary: attachmentSummary(from: envelope.attachments)
-        )
-        let images = imageInputs(from: envelope.attachments)
+        let prompt = LocalGemmaPromptBuilder.transcriptEnhancerPrompt(transcript: fallbackTranscript)
         let startedAt = Date()
         DebugLog.providerEvent(
             phase: "start",
             service: "local_gemma_transcript_agent",
             model: LocalProcessorStatus.gemmaModel.rawValue,
-            metadata: "request_id=\(envelope.requestId) thread_id=\(envelope.threadId) surface=\(envelope.surface) input_source=\(envelope.inputSource) raw_chars=\(fallbackTranscript.count) images=\(images.count)",
+            metadata: "request_id=\(envelope.requestId) thread_id=\(envelope.threadId) surface=\(envelope.surface) input_source=\(envelope.inputSource) profile=local_text_only raw_chars=\(fallbackTranscript.count)",
             payloadPreview: ""
         )
 
         let output: String
         do {
-            if images.isEmpty || !Self.multimodalContainerEnabled {
-                output = try await generateText(
-                    systemPrompt: systemPrompt,
-                    userPrompt: userPrompt,
-                    temperature: 0.2,
-                    maxTokens: 700
-                )
-            } else {
-                output = try await generateMultimodalText(
-                    systemPrompt: systemPrompt,
-                    userPrompt: userPrompt,
-                    images: images,
-                    temperature: 0.2,
-                    maxTokens: 700
-                )
-            }
+            output = try await generateText(
+                systemPrompt: prompt.systemPrompt,
+                userPrompt: prompt.userPrompt,
+                temperature: 0.0,
+                maxTokens: prompt.maxTokens
+            )
         } catch {
             DebugLog.providerEvent(
                 phase: "error",
                 service: "local_gemma_transcript_agent",
                 model: LocalProcessorStatus.gemmaModel.rawValue,
-                metadata: "request_id=\(envelope.requestId) thread_id=\(envelope.threadId) surface=\(envelope.surface) input_source=\(envelope.inputSource) duration_ms=\(durationMS(since: startedAt)) images=\(images.count)",
+                metadata: "request_id=\(envelope.requestId) thread_id=\(envelope.threadId) surface=\(envelope.surface) input_source=\(envelope.inputSource) profile=local_text_only duration_ms=\(durationMS(since: startedAt))",
                 payloadPreview: error.localizedDescription
             )
             throw error
@@ -361,7 +347,7 @@ final class LocalGemmaService {
             phase: "success",
             service: "local_gemma_transcript_agent",
             model: LocalProcessorStatus.gemmaModel.rawValue,
-            metadata: "request_id=\(envelope.requestId) thread_id=\(envelope.threadId) surface=\(envelope.surface) input_source=\(envelope.inputSource) duration_ms=\(durationMS(since: startedAt)) output_chars=\(output.count) images=\(images.count)",
+            metadata: "request_id=\(envelope.requestId) thread_id=\(envelope.threadId) surface=\(envelope.surface) input_source=\(envelope.inputSource) profile=local_text_only duration_ms=\(durationMS(since: startedAt)) output_chars=\(output.count)",
             payloadPreview: output
         )
 
@@ -626,6 +612,19 @@ enum LocalProcessingRouter {
         }
     }
 
+    static func contextProfile(for config: ElsonLocalConfig, mode: InteractionMode) -> ProcessingPipelineProfile {
+        ProcessingPipelineProfile(config: config, mode: mode)
+    }
+
+    static func contextProfile(runtimeMode: RuntimeMode, mode: InteractionMode) -> ProcessingPipelineProfile {
+        ProcessingPipelineProfile(runtimeMode: runtimeMode, interactionMode: mode)
+    }
+
+    static func localTranscriptEnhancerRequest(from request: ElsonRequestEnvelope) -> ElsonRequestEnvelope {
+        ProcessingPipelineProfile(runtimeMode: .local, interactionMode: .transcription)
+            .transcriptEnhancerRequest(from: request)
+    }
+
     static func status() -> LocalProcessorStatus {
         LocalProcessorStatus.current()
     }
@@ -738,7 +737,9 @@ enum LocalProcessingRouter {
     ) async throws -> String {
         switch config.runtimeMode {
         case .local:
-            return try await LocalGemmaService.shared.runTranscriptAgent(request: request)
+            return try await LocalGemmaService.shared.runTranscriptAgent(
+                request: localTranscriptEnhancerRequest(from: request)
+            )
         case .hosted:
             return try await LocalAIService().runTranscriptAgent(
                 request: request,
@@ -788,6 +789,23 @@ enum LocalProcessingRouter {
                 logContext: logContext
             )
         }
+    }
+}
+
+enum LocalGemmaPromptBuilder {
+    struct TranscriptEnhancerPrompt: Equatable, Sendable {
+        let systemPrompt: String
+        let userPrompt: String
+        let maxTokens: Int
+    }
+
+    static func transcriptEnhancerPrompt(transcript: String) -> TranscriptEnhancerPrompt {
+        let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        return TranscriptEnhancerPrompt(
+            systemPrompt: "Clean up this transcript. Preserve language and meaning. Return only the corrected text.",
+            userPrompt: trimmed,
+            maxTokens: max(180, min(700, (trimmed.count / 3) + 96))
+        )
     }
 }
 

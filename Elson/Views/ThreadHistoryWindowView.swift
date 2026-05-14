@@ -473,13 +473,14 @@ struct ThreadHistoryWindowView: View {
                         }
                     }
 
-                    let shouldPrefetchScreenContext = config.runtimeMode != .local || mode == .agent
-                    let screenContextTask: Task<(context: LocalScreenContext, durationMS: Int)?, Error>? = shouldPrefetchScreenContext
+                    let processingProfile = LocalProcessingRouter.contextProfile(for: config, mode: mode)
+                    let screenContextTask: Task<(context: LocalScreenContext, durationMS: Int)?, Error>? = processingProfile.shouldPrefetchScreenContext
                         ? Task {
                             try await ElsonRuntime.shared.prefetchShortcutScreenContext(
                                 requestId: requestId,
                                 surface: "chat",
                                 threadId: threadId,
+                                mode: mode,
                                 config: config,
                                 attachments: pendingAttachments,
                                 screenshotJPEGData: pendingScreenshotJPEGData

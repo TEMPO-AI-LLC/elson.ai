@@ -91,11 +91,18 @@ final class ElsonRuntime: @unchecked Sendable {
         requestId: String,
         surface: String,
         threadId: String,
+        mode: InteractionMode,
         config: ElsonLocalConfig,
         attachments: [AgentAttachment],
         screenshotJPEGData: [Data]
     ) async throws -> (context: LocalScreenContext, durationMS: Int)? {
-        _ = config
+        let profile = LocalProcessingRouter.contextProfile(for: config, mode: mode)
+        guard profile.shouldPrefetchScreenContext else {
+            DebugLog.runtime(
+                "screen_context_prefetch_skipped request_id=\(requestId) thread_id=\(threadId) mode=\(mode.rawValue) profile=\(profile.transcriptEnhancerProfileName)"
+            )
+            return nil
+        }
 
         let requestAttachments = makeAttachmentsPayload(attachments: attachments, screenshotJPEGData: screenshotJPEGData)
         guard requestAttachments.contains(where: { $0.kind == "image" || $0.mime.lowercased().hasPrefix("image/") }) else {
@@ -113,6 +120,7 @@ final class ElsonRuntime: @unchecked Sendable {
         let context = try await screenContextForStage(
             provider: screenContextProvider(),
             stage: "shortcut_prefetch",
+            mode: mode,
             attachments: requestAttachments,
             requestId: requestId,
             threadId: threadId,
@@ -316,6 +324,7 @@ final class ElsonRuntime: @unchecked Sendable {
         let screenContext = try await screenContextForStage(
             provider: screenContextProvider(),
             stage: effectiveMode == .agent ? "working_agent" : "transcript_agent",
+            mode: effectiveMode,
             attachments: requestAttachments,
             requestId: resolvedRequestId,
             threadId: threadId,
@@ -413,6 +422,7 @@ final class ElsonRuntime: @unchecked Sendable {
             initialScreenContext = try await screenContextForStage(
                 provider: screenContextProvider(),
                 stage: mode == .agent ? "working_agent" : "transcript_agent",
+                mode: mode,
                 attachments: requestAttachments,
                 requestId: requestId,
                 threadId: threadId,
@@ -475,6 +485,7 @@ final class ElsonRuntime: @unchecked Sendable {
             finalScreenContext = try await screenContextForStage(
                 provider: screenContextProvider(),
                 stage: "working_agent",
+                mode: .agent,
                 attachments: requestAttachments,
                 requestId: requestId,
                 threadId: threadId,
@@ -617,6 +628,7 @@ final class ElsonRuntime: @unchecked Sendable {
                 chatScreenContext = try await screenContextForStage(
                     provider: screenContextProvider(),
                     stage: "transcript_agent",
+                    mode: .transcription,
                     attachments: requestAttachments,
                     requestId: requestId,
                     threadId: threadId,
@@ -673,6 +685,7 @@ final class ElsonRuntime: @unchecked Sendable {
                 chatScreenContext = try await screenContextForStage(
                     provider: screenContextProvider(),
                     stage: "working_agent",
+                    mode: .agent,
                     attachments: requestAttachments,
                     requestId: requestId,
                     threadId: threadId,
@@ -728,6 +741,7 @@ final class ElsonRuntime: @unchecked Sendable {
             fallbackScreenContext = try await screenContextForStage(
                 provider: screenContextProvider(),
                 stage: mode == .agent ? "working_agent" : "transcript_agent",
+                mode: mode,
                 attachments: requestAttachments,
                 requestId: requestId,
                 threadId: threadId,
@@ -1092,6 +1106,7 @@ final class ElsonRuntime: @unchecked Sendable {
     private func screenContextForStage(
         provider: LocalModelProvider,
         stage: String,
+        mode: InteractionMode,
         attachments: [ElsonAttachmentPayload],
         requestId: String,
         threadId: String,
@@ -1101,6 +1116,9 @@ final class ElsonRuntime: @unchecked Sendable {
         myElsonMarkdown: String,
         lazy: Bool
     ) async throws -> LocalScreenContext {
+        let profile = LocalProcessingRouter.contextProfile(for: config, mode: mode)
+        let pipelineStage = ProcessingPipelineStage(screenContextStage: stage)
+
         if stage == "transcript_agent", !config.transcriptScreenOCR {
             DebugLog.runtime(
                 "screen_context_stage request_id=\(requestId) thread_id=\(threadId) stage=\(stage) provider=\(provider.rawValue) ocr=disabled_by_setting"
@@ -1125,9 +1143,9 @@ final class ElsonRuntime: @unchecked Sendable {
             return .none
         }
 
-        if config.runtimeMode == .local, stage == "transcript_agent" {
+        guard profile.shouldResolveScreenContext(for: pipelineStage) else {
             DebugLog.runtime(
-                "screen_context_stage request_id=\(requestId) thread_id=\(threadId) stage=\(stage) provider=local ocr=skipped_local_multimodal images=\(images.count)"
+                "screen_context_stage request_id=\(requestId) thread_id=\(threadId) stage=\(stage) provider=\(provider.rawValue) ocr=skipped_by_processing_profile mode=\(mode.rawValue) profile=\(profile.transcriptEnhancerProfileName) images=\(images.count)"
             )
             return .none
         }
