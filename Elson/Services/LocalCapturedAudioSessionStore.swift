@@ -6,6 +6,7 @@ enum LocalCapturedAudioSessionStatus: String, Codable, Sendable {
     case stopped
     case transcribing
     case ready
+    case partial
     case delivered
     case failed
     case cancelled
@@ -28,11 +29,36 @@ struct LocalCapturedAudioSessionSnapshot: Codable, Equatable, Identifiable, Send
     var rawTranscriptFilePath: String?
     var chunkAudioFilePaths: [String]
     var transcriptChunkTimings: [ElsonTranscriptChunkTimingPayload]?
+    var isPartial: Bool?
+    var partialReason: String?
 
     var id: String { sessionId }
 
     var sessionDirectoryURL: URL {
         URL(fileURLWithPath: directoryPath, isDirectory: true)
+    }
+}
+
+extension LocalCapturedAudioSessionSnapshot {
+    enum CodingKeys: String, CodingKey {
+        case sessionId
+        case directoryPath
+        case createdAt
+        case updatedAt
+        case requestId
+        case threadId
+        case sourceSurface
+        case mode
+        case status
+        case errorMessage
+        case rawTranscript
+        case snippetCount
+        case audioFilePath
+        case rawTranscriptFilePath
+        case chunkAudioFilePaths
+        case transcriptChunkTimings
+        case isPartial
+        case partialReason
     }
 }
 
@@ -81,7 +107,9 @@ final class LocalCapturedAudioSessionStore: @unchecked Sendable {
             audioFilePath: nil,
             rawTranscriptFilePath: nil,
             chunkAudioFilePaths: [],
-            transcriptChunkTimings: nil
+            transcriptChunkTimings: nil,
+            isPartial: nil,
+            partialReason: nil
         )
         try save(&snapshot)
         purgeExpiredSessions()
@@ -144,7 +172,9 @@ final class LocalCapturedAudioSessionStore: @unchecked Sendable {
         rawTranscript: String,
         snippetCount: Int?,
         transcriptChunkTimings: [ElsonTranscriptChunkTimingPayload] = [],
-        status: LocalCapturedAudioSessionStatus = .ready
+        status: LocalCapturedAudioSessionStatus = .ready,
+        isPartial: Bool = false,
+        partialReason: String? = nil
     ) throws {
         var snapshot = try loadOrCreateFallback(sessionId: sessionId)
         let trimmed = rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -156,6 +186,8 @@ final class LocalCapturedAudioSessionStore: @unchecked Sendable {
         snapshot.snippetCount = snippetCount
         snapshot.transcriptChunkTimings = transcriptChunkTimings.isEmpty ? nil : transcriptChunkTimings
         snapshot.status = status
+        snapshot.isPartial = isPartial || status == .partial
+        snapshot.partialReason = normalized(partialReason)
         snapshot.errorMessage = nil
         try save(&snapshot)
     }
@@ -164,6 +196,13 @@ final class LocalCapturedAudioSessionStore: @unchecked Sendable {
         guard var snapshot = load(sessionId: sessionId) else { return }
         snapshot.status = status
         snapshot.errorMessage = normalized(errorMessage)
+        if status == .partial {
+            snapshot.isPartial = true
+            snapshot.partialReason = normalized(errorMessage)
+        } else if status == .ready || status == .delivered {
+            snapshot.isPartial = false
+            snapshot.partialReason = nil
+        }
         try? save(&snapshot)
     }
 

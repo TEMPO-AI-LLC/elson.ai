@@ -27,7 +27,27 @@ final class KeyboardService {
         }
     }
 
+    private struct ShortcutProcessingJob {
+        let requestId: String
+        let requestStartedAt: Date
+        let audioCaptureDurationMS: Int
+        let session: LocalChunkedAudioSession
+        let destination: ShortcutDestination
+        let threadId: String
+        let optimisticMessageId: UUID
+        let config: ElsonLocalConfig
+        let pendingAttachments: [AgentAttachment]
+        let clipboardText: String?
+        let latencyState: ShortcutLatencyState?
+        let runtimeMode: InteractionMode?
+        let optimisticTarget: ThreadReplyTarget
+        let processingState: IndicatorState
+        let screenshotData: [Data]
+        let screenContextPrefetchTask: Task<(context: LocalScreenContext, durationMS: Int)?, Never>?
+    }
+
     @ObservationIgnored private let minimumShortcutRecordingDuration: TimeInterval = 1
+    @ObservationIgnored private let shortcutLiveFinalizationDeadline: TimeInterval = 8
     @ObservationIgnored private var appSettings: AppSettings?
     @ObservationIgnored private var recordingService: AudioRecordingService?
     @ObservationIgnored private var chatStore: ChatStore?
@@ -45,7 +65,9 @@ final class KeyboardService {
     @ObservationIgnored private var activeShortcutPreviousThreadId: String? = nil
     @ObservationIgnored private var activeShortcutLatencyState: ShortcutLatencyState? = nil
     @ObservationIgnored private var shortcutRunScreenshotJPEGData: [Data] = []
-    @ObservationIgnored private var shortcutDeliveryInFlight = false
+    @ObservationIgnored private var shortcutCaptureInFlight = false
+    @ObservationIgnored private var shortcutProcessingQueue: [ShortcutProcessingJob] = []
+    @ObservationIgnored private var isShortcutProcessingQueueRunning = false
     @ObservationIgnored private var shortcutScreenContextPrefetchTask: Task<(context: LocalScreenContext, durationMS: Int)?, Never>?
 
     func setup(with appSettings: AppSettings, recordingService: AudioRecordingService, chatStore: ChatStore) {
@@ -270,16 +292,22 @@ final class KeyboardService {
         recordingService: AudioRecordingService,
         chatStore: ChatStore
     ) {
-        guard !recordingService.isRecording else { return }
-        guard !shortcutDeliveryInFlight else {
-            DebugLog.runtime("shortcut_recording_start_ignored reason=delivery_in_flight")
+        guard !recordingService.isRecording, !shortcutCaptureInFlight else {
+            DebugLog.runtime("shortcut_recording_start_ignored reason=capture_active")
+            NotificationHelper.showNotification(
+                title: "Elson.ai",
+                body: "Recording is already active.",
+                sound: nil
+            )
             return
         }
+        shortcutCaptureInFlight = true
 
         Task { @MainActor [weak self] in
             guard let self else { return }
-            guard !self.shortcutDeliveryInFlight else {
-                DebugLog.runtime("shortcut_recording_start_ignored reason=delivery_in_flight_after_permission")
+            guard !recordingService.isRecording else {
+                self.shortcutCaptureInFlight = false
+                DebugLog.runtime("shortcut_recording_start_ignored reason=recording_active_after_schedule")
                 return
             }
 
@@ -299,6 +327,7 @@ final class KeyboardService {
             do {
                 try await PermissionCoordinator.ensureMicrophonePermission()
             } catch {
+                self.shortcutCaptureInFlight = false
                 self.presentShortcutStartFailure(
                     error.localizedDescription,
                     appSettings: appSettings,
@@ -310,6 +339,7 @@ final class KeyboardService {
             DebugLog.requestMilestone(milestoneSnapshot, name: "microphone_permission_granted")
 
             if appSettings.listeningMode == .hold, !self.isShortcutActive(shortcut) {
+                self.shortcutCaptureInFlight = false
                 return
             }
 
@@ -328,6 +358,7 @@ final class KeyboardService {
                 )
             )
             guard session.start() else {
+                self.shortcutCaptureInFlight = false
                 self.presentShortcutStartFailure(
                     "Failed to start microphone recording. Check System Settings > Privacy & Security > Microphone.",
                     appSettings: appSettings,
@@ -400,6 +431,7 @@ final class KeyboardService {
             activeRecordingShortcut = nil
             activeShortcutLatencyState = nil
             shortcutRunScreenshotJPEGData = []
+            shortcutCaptureInFlight = false
             appSettings.indicatorState = .error
             NotificationHelper.showNotification(
                 title: "Elson.ai",
@@ -411,7 +443,6 @@ final class KeyboardService {
         appSettings.isRecording = false
         activeShortcutDestination = nil
         activeRecordingShortcut = nil
-        shortcutDeliveryInFlight = true
 
         let threadId = destination.threadId
         let optimisticMessageId = UUID()
@@ -419,6 +450,8 @@ final class KeyboardService {
         let pendingAttachments = appSettings.pendingAttachments
         let clipboardText = ClipboardHelper.getClipboardContent()
         let latencyState = activeShortcutLatencyState
+        let screenshotData = shortcutRunScreenshotJPEGData
+        let screenContextPrefetchTask = shortcutScreenContextPrefetchTask
         let runtimeMode: InteractionMode? = {
             guard case let .runtime(mode, _) = destination else { return nil }
             return mode
@@ -441,361 +474,487 @@ final class KeyboardService {
         }()
         appSettings.indicatorState = processingState
 
-        Task {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
             do {
                 let requestId = session.requestId ?? UUID().uuidString
                 let requestStartedAt = Date()
-                var timeline = RequestTimelineSnapshot(
-                    requestId: requestId,
-                    threadId: threadId,
-                    surface: "shortcut",
-                    inputSource: "audio",
-                    startedAt: requestStartedAt
-                )
 
                 let audioCaptureStartedAt = Date()
                 let kept = try await session.stopRecordingDiscardingIfShorterThan(minimumShortcutRecordingDuration)
                 let audioCaptureDurationMS = Int(Date().timeIntervalSince(audioCaptureStartedAt) * 1000)
-                timeline = timeline.addingStage(.audioCaptureFinalize, durationMS: audioCaptureDurationMS)
                 guard kept else {
-                    await MainActor.run {
-                        self.activeChunkedSession = nil
-                        self.activeShortcutThreadId = nil
-                        self.restorePriorThreadIfNeeded(chatStore: chatStore)
-                        self.activeRecordingShortcut = nil
-                        self.activeShortcutLatencyState = nil
-                        self.shortcutRunScreenshotJPEGData = []
-                        self.shortcutScreenContextPrefetchTask?.cancel()
-                        self.shortcutScreenContextPrefetchTask = nil
-                        self.shortcutDeliveryInFlight = false
-                        appSettings.indicatorState = .idle
-                        NotificationHelper.showNotification(
-                            title: "Elson.ai",
-                            body: "Recording too short.",
-                            sound: nil
-                        )
-                    }
+                    self.activeChunkedSession = nil
+                    self.activeShortcutThreadId = nil
+                    self.restorePriorThreadIfNeeded(chatStore: chatStore)
+                    self.activeRecordingShortcut = nil
+                    self.activeShortcutLatencyState = nil
+                    self.shortcutRunScreenshotJPEGData = []
+                    self.shortcutScreenContextPrefetchTask?.cancel()
+                    self.shortcutScreenContextPrefetchTask = nil
+                    self.shortcutCaptureInFlight = false
+                    appSettings.indicatorState = .idle
+                    NotificationHelper.showNotification(
+                        title: "Elson.ai",
+                        body: "Recording too short.",
+                        sound: nil
+                    )
                     return
                 }
                 session.updateReplayContext(mode: runtimeMode ?? .transcription, threadId: threadId)
 
-                if case let .threadComposer(targetThreadId) = destination {
-                    let audioDraft = try await session.finalize()
-                    let formattedText = try await ElsonRuntime.shared.formatRawTranscriptForChatComposer(
-                        requestId: requestId,
-                        rawTranscript: audioDraft.rawTranscript,
-                        threadId: targetThreadId,
-                        config: config,
-                        conversationHistory: conversationHistoryPayload(from: chatStore.thread.messages)
-                    )
-                    await MainActor.run {
-                        session.markDeliveryCompleted()
-                        self.activeChunkedSession = nil
-                        self.activeShortcutThreadId = nil
-                        self.activeShortcutPreviousThreadId = nil
-                        self.activeRecordingShortcut = nil
-                        self.activeShortcutLatencyState = nil
-                        self.shortcutRunScreenshotJPEGData = []
-                        self.shortcutScreenContextPrefetchTask = nil
-                        self.shortcutDeliveryInFlight = false
-                        appSettings.indicatorState = .success
-                        NotificationCenter.default.post(name: .insertTextIntoThreadComposer, object: formattedText)
-                    }
-                    return
-                }
-
-                let screenContextTask = Task<([Data], (context: LocalScreenContext, durationMS: Int)?), Error> {
-                    var screenshotData = shortcutRunScreenshotJPEGData
-                    if screenshotData.isEmpty, let captured = try? await captureScreenshotDataIfPossible() {
-                        screenshotData = [captured]
-                    }
-                    if let prefetched = await shortcutScreenContextPrefetchTask?.value {
-                        return (screenshotData, prefetched)
-                    }
-                    let prefetched = try await ElsonRuntime.shared.prefetchShortcutScreenContext(
-                        requestId: requestId,
-                        surface: "shortcut",
-                        threadId: threadId,
-                        config: config,
-                        attachments: pendingAttachments,
-                        screenshotJPEGData: screenshotData
-                    )
-                    return (screenshotData, prefetched)
-                }
-
-                let groqStartedAt = Date()
-                let audioDraft = try await session.finalize()
-                let groqDurationMS = Int(Date().timeIntervalSince(groqStartedAt) * 1000)
-                timeline = timeline.addingStage(.groqTranscription, durationMS: groqDurationMS, countTowardProvider: true)
-                DebugLog.requestMilestone(timeline, name: "recording_stopped")
-                if audioDraft.firstChunkTranscriptionCompletedAt != nil {
-                    DebugLog.requestMilestone(timeline, name: "first_chunk_transcription_completed")
-                }
-                await MainActor.run {
-                    chatStore.append(
-                        ChatMessage(
-                            id: optimisticMessageId,
-                            role: .user,
-                            content: "Voice message...",
-                            style: .voiceTranscript,
-                            rawTranscript: audioDraft.rawTranscript,
-                            captureSessionId: session.persistedSessionId
-                        )
-                    )
-                    chatStore.beginRun(threadId: threadId, mode: optimisticTarget, optimisticUserMessageId: optimisticMessageId)
-                }
-                let prefetchedScreenContextResult = try await screenContextTask.value
-                let screenshotData = prefetchedScreenContextResult.0
-                let prefetchedScreenContext = prefetchedScreenContextResult.1
-                if let prefetchedScreenContext {
-                    timeline = timeline.addingStage(
-                        .screenContext,
-                        durationMS: prefetchedScreenContext.durationMS,
-                        countTowardProvider: true
-                    )
-                }
-                let result = try await ElsonRuntime.shared.processAudioTranscriptWithRetry(
+                let job = ShortcutProcessingJob(
                     requestId: requestId,
-                    rawTranscript: audioDraft.rawTranscript,
-                    snippetCount: audioDraft.snippetCount,
-                    transcriptChunkTimings: audioDraft.transcriptChunkTimings,
-                    mode: runtimeMode ?? .transcription,
-                    surface: "shortcut",
+                    requestStartedAt: requestStartedAt,
+                    audioCaptureDurationMS: audioCaptureDurationMS,
+                    session: session,
+                    destination: destination,
                     threadId: threadId,
+                    optimisticMessageId: optimisticMessageId,
                     config: config,
+                    pendingAttachments: pendingAttachments,
                     clipboardText: clipboardText,
-                    attachments: pendingAttachments,
-                    screenshotJPEGData: screenshotData,
-                    prefetchedDeciderScreenContext: prefetchedScreenContext?.context,
-                    audioLatencyContext: AudioLatencyContext(
-                        shortcutDetectedAt: latencyState?.shortcutDetectedAt,
-                        microphonePermissionStartedAt: latencyState?.microphonePermissionStartedAt,
-                        microphonePermissionGrantedAt: latencyState?.microphonePermissionGrantedAt,
-                        recordingStartedAt: latencyState?.recordingStartedAt,
-                        recordingStoppedAt: audioDraft.recordingStoppedAt,
-                        firstChunkTranscriptionCompletedAt: audioDraft.firstChunkTranscriptionCompletedAt
-                    )
+                    latencyState: latencyState,
+                    runtimeMode: runtimeMode,
+                    optimisticTarget: optimisticTarget,
+                    processingState: processingState,
+                    screenshotData: screenshotData,
+                    screenContextPrefetchTask: screenContextPrefetchTask
                 )
-                let desktopActionsStartedAt = Date()
-                let actionNotes = await DesktopActionExecutor.execute(result.actions, appSettings: appSettings)
-                let desktopActionsDurationMS = Int(Date().timeIntervalSince(desktopActionsStartedAt) * 1000)
-                timeline = result.timeline
-                    .withThreadId(result.responseThreadId ?? threadId)
-                    .addingStage(.audioCaptureFinalize, durationMS: timeline.stageDurationsMS[RequestTimelineStage.audioCaptureFinalize.rawValue] ?? 0)
-                    .addingStage(.groqTranscription, durationMS: timeline.stageDurationsMS[RequestTimelineStage.groqTranscription.rawValue] ?? 0, countTowardProvider: true)
-                    .addingStage(.screenContext, durationMS: timeline.stageDurationsMS[RequestTimelineStage.screenContext.rawValue] ?? 0, countTowardProvider: true)
-                    .addingStage(.desktopActions, durationMS: desktopActionsDurationMS)
-                let capturedNewScreenshot = result.actions.contains { $0.type == "capture_screenshot" }
-                let correctionSeed = result.postResponseCorrectionSeed
-
-                let uiCommitStartedAt = Date()
-                var clipboardResult = ClipboardOperationResult.empty
-                var visibleOutputCommittedAt: Date?
-                await MainActor.run {
-                    session.markDeliveryCompleted()
-                    self.activeChunkedSession = nil
-                    self.activeRecordingShortcut = nil
-                    let captureSessionId = session.persistedSessionId
-                    let effectiveThreadId = result.responseThreadId ?? threadId
-                    let assistantMessageId = UUID()
-                    let userAttachments = self.persistUserAttachmentsIfNeeded(
-                        result: result,
-                        screenshotJPEGData: screenshotData,
-                        threadId: effectiveThreadId,
-                        messageId: optimisticMessageId
-                    )
-                    if effectiveThreadId != threadId {
-                        chatStore.adoptThreadIdPreservingMessages(newId: effectiveThreadId)
-                    }
-                    if !actionNotes.isEmpty {
-                        print(actionNotes.joined(separator: " "))
-                    }
-                    chatStore.replaceMessage(
-                        id: optimisticMessageId,
-                        role: .user,
-                        style: .voiceTranscript,
-                        rawTranscript: result.rawTranscript,
-                        overrideRawTranscript: true,
-                        captureSessionId: captureSessionId,
-                        overrideCaptureSessionId: true,
-                        attachments: userAttachments,
-                        showsAttachmentChip: !userAttachments.isEmpty,
-                        with: result.transcript.isEmpty ? "Voice message..." : result.transcript
-                    )
-                    chatStore.append(
-                        ChatMessage(
-                            id: assistantMessageId,
-                            role: .assistant,
-                            content: result.replyText,
-                            insertedText: result.clipboardText,
-                            feedbackSubject: result.feedbackSubject
-                        )
-                    )
-                    chatStore.endRun(threadId: threadId)
-                    appSettings.recordLastOutput(from: result, captureSessionId: captureSessionId)
-                    if runtimeMode == .agent {
-                        chatStore.noteConversationActivity(
-                            threadId: effectiveThreadId,
-                            lastMessage: result.replyText,
-                            lastRole: "assistant",
-                            lastReplyTarget: result.replyMode,
-                            sessionKey: result.sessionKey,
-                            markUnread: false
-                        )
-                    }
-                    if !result.replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        appSettings.appendTranscriptHistory(
-                            text: result.replyText,
-                            rawTranscript: result.rawTranscript,
-                            source: "shortcut",
-                            threadId: effectiveThreadId,
-                            replyMode: result.replyMode,
-                            actualRoute: result.actualRoute,
-                            routingSource: result.routingSource,
-                            forcedRouteReason: result.forcedRouteReason,
-                            requestId: result.requestId,
-                            captureSessionId: captureSessionId
-                        )
-                    }
-                    visibleOutputCommittedAt = Date()
-                    clipboardResult = ClipboardHelper.deliverTranscriptDetailed(
-                        result.clipboardText,
-                        behavior: appSettings.transcriptClipboardBehavior()
-                    )
-                    self.activeShortcutThreadId = nil
-                    self.activeShortcutPreviousThreadId = nil
-                    self.activeShortcutLatencyState = nil
-                    self.shortcutScreenContextPrefetchTask = nil
-                    self.shortcutDeliveryInFlight = false
-                    appSettings.indicatorState = runtimeMode == .agent ? .agentSuccess : .success
-                    appSettings.clearAgentAttachments()
-                    if !capturedNewScreenshot {
-                        appSettings.pendingScreenshotJPEGData = []
-                    }
-                    if let updatedMyElsonMarkdown = result.updatedMyElsonMarkdown {
-                        appSettings.applyAgentMyElsonMarkdownUpdate(updatedMyElsonMarkdown)
-                    }
-                }
-                let uiCommitDurationMS = Int(Date().timeIntervalSince(uiCommitStartedAt) * 1000)
-                timeline = timeline
-                    .withThreadId(result.responseThreadId ?? threadId)
-                    .addingStage(.uiCommit, durationMS: uiCommitDurationMS)
-                    .addingMetric(
-                        "latency_hotkey_to_recording_start_ms",
-                        valueMS: durationMS(from: latencyState?.shortcutDetectedAt, to: latencyState?.recordingStartedAt)
-                    )
-                    .addingMetric(
-                        "latency_recording_stop_to_first_stt_ms",
-                        valueMS: nonNegativeDurationMS(from: audioDraft.recordingStoppedAt, to: audioDraft.firstChunkTranscriptionCompletedAt)
-                    )
-                    .addingMetric(
-                        "latency_recording_stop_to_visible_ms",
-                        valueMS: durationMS(from: audioDraft.recordingStoppedAt, to: visibleOutputCommittedAt)
-                    )
-                    .addingMetric(
-                        "latency_visible_to_clipboard_ms",
-                        valueMS: durationMS(from: visibleOutputCommittedAt, to: clipboardResult.copyCompletedAt)
-                    )
-                    .addingMetric(
-                        "latency_visible_to_autopaste_ms",
-                        valueMS: durationMS(from: visibleOutputCommittedAt, to: clipboardResult.pasteCompletedAt)
-                    )
-                    .addingMetric(
-                        "latency_hotkey_to_autopaste_ms",
-                        valueMS: durationMS(from: latencyState?.shortcutDetectedAt, to: clipboardResult.pasteCompletedAt)
-                    )
-                    .withVisibleLatencyMS(Int(Date().timeIntervalSince(requestStartedAt) * 1000))
-                if visibleOutputCommittedAt != nil {
-                    DebugLog.requestMilestone(timeline, name: "visible_output_committed")
-                }
-                if clipboardResult.copied {
-                    DebugLog.requestMilestone(timeline, name: "clipboard_copy_completed")
-                }
-                if clipboardResult.autoPasted {
-                    DebugLog.requestMilestone(timeline, name: "autopaste_completed")
-                }
-                DebugLog.requestTimeline(timeline)
-                await MainActor.run {
-                    PostResponseCorrectionCoordinator.shared.schedule(
-                        seed: correctionSeed,
-                        config: config,
-                        appSettings: appSettings
-                    )
-                }
+                self.activeChunkedSession = nil
+                self.activeShortcutThreadId = nil
+                self.activeShortcutPreviousThreadId = nil
+                self.activeRecordingShortcut = nil
+                self.activeShortcutLatencyState = nil
+                self.shortcutRunScreenshotJPEGData = []
+                self.shortcutScreenContextPrefetchTask = nil
+                self.shortcutCaptureInFlight = false
+                self.enqueueShortcutProcessing(job)
             } catch {
                 DebugLog.runtimeError(
                     "shortcut_run_failed thread_id=\(threadId) mode=\(optimisticTarget.rawValue) error=\(error.localizedDescription)"
                 )
-                await MainActor.run {
-                    self.activeChunkedSession = session.isStopped ? session : nil
-                    self.activeShortcutThreadId = nil
-                    self.activeShortcutPreviousThreadId = nil
-                    self.activeRecordingShortcut = nil
-                    self.activeShortcutLatencyState = nil
-                    self.shortcutScreenContextPrefetchTask = nil
-                    self.shortcutDeliveryInFlight = false
-                    let captureSessionId = session.persistedSessionId
-                    let archivedRawTranscript = LocalCapturedAudioSessionStore().rawTranscript(sessionId: captureSessionId)
-                    let friendlyMessage = self.userFacingShortcutErrorMessage(error.localizedDescription)
-                    let noSpeechDetected = self.isNoSpeechDetectedMessage(friendlyMessage)
-                    if !noSpeechDetected {
-                        appSettings.recordCaptureFailure(sessionId: captureSessionId, errorMessage: friendlyMessage)
-                    }
-                    if case .runtime = destination, !noSpeechDetected {
-                        let userContent = archivedRawTranscript ?? "Voice message"
-                        if chatStore.containsMessage(id: optimisticMessageId) {
-                            chatStore.replaceMessage(
-                                id: optimisticMessageId,
-                                role: .user,
-                                style: .voiceTranscript,
-                                rawTranscript: archivedRawTranscript,
-                                overrideRawTranscript: true,
-                                captureSessionId: captureSessionId,
-                                overrideCaptureSessionId: true,
-                                with: userContent
-                            )
-                        } else {
-                            chatStore.append(
-                                ChatMessage(
-                                    id: optimisticMessageId,
-                                    role: .user,
-                                    content: userContent,
-                                    style: .voiceTranscript,
-                                    rawTranscript: archivedRawTranscript,
-                                    captureSessionId: captureSessionId
-                                )
-                            )
-                        }
-                        chatStore.append(ChatMessage(role: .assistant, content: friendlyMessage))
-                        chatStore.endRun(threadId: threadId)
-                        chatStore.noteConversationActivity(
-                            threadId: threadId,
-                            lastMessage: friendlyMessage,
-                            lastRole: "assistant",
-                            lastReplyTarget: optimisticTarget.rawValue,
-                            markUnread: false
-                        )
-                    } else if noSpeechDetected {
-                        if chatStore.containsMessage(id: optimisticMessageId) {
-                            chatStore.removeMessage(id: optimisticMessageId)
-                        }
-                        chatStore.endRun(threadId: threadId)
-                    }
-                    appSettings.indicatorState = noSpeechDetected ? .idle : .error
-                    NotificationHelper.showNotification(
-                        title: "Elson.ai",
-                        body: friendlyMessage,
-                        sound: .default
-                    )
-                }
+                self.activeChunkedSession = nil
+                self.activeShortcutThreadId = nil
+                self.activeShortcutPreviousThreadId = nil
+                self.activeRecordingShortcut = nil
+                self.activeShortcutLatencyState = nil
+                self.shortcutRunScreenshotJPEGData = []
+                self.shortcutScreenContextPrefetchTask = nil
+                self.shortcutCaptureInFlight = false
+                let captureSessionId = session.persistedSessionId
+                let friendlyMessage = self.userFacingShortcutErrorMessage(error.localizedDescription)
+                appSettings.recordCaptureFailure(sessionId: captureSessionId, errorMessage: friendlyMessage)
+                appSettings.indicatorState = .error
+                NotificationHelper.showNotification(
+                    title: "Elson.ai",
+                    body: friendlyMessage,
+                    sound: .default
+                )
             }
         }
+    }
+
+    private func enqueueShortcutProcessing(_ job: ShortcutProcessingJob) {
+        shortcutProcessingQueue.append(job)
+        DebugLog.runtime(
+            "shortcut_capture_enqueued request_id=\(job.requestId) thread_id=\(job.threadId) audio_session_id=\(job.session.persistedSessionId) queue_depth=\(shortcutProcessingQueue.count)"
+        )
+        processNextShortcutProcessingJobIfNeeded()
+    }
+
+    private func processNextShortcutProcessingJobIfNeeded() {
+        guard !isShortcutProcessingQueueRunning else { return }
+        guard !shortcutProcessingQueue.isEmpty else { return }
+        isShortcutProcessingQueueRunning = true
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !self.shortcutProcessingQueue.isEmpty {
+                let job = self.shortcutProcessingQueue.removeFirst()
+                await self.processShortcutProcessingJob(job)
+            }
+            self.isShortcutProcessingQueueRunning = false
+        }
+    }
+
+    private func processShortcutProcessingJob(_ job: ShortcutProcessingJob) async {
+        guard let appSettings, let chatStore else { return }
+        appSettings.indicatorState = job.processingState
+        DebugLog.runtime(
+            "shortcut_processing_started request_id=\(job.requestId) thread_id=\(job.threadId) audio_session_id=\(job.session.persistedSessionId)"
+        )
+
+        do {
+            if case let .threadComposer(targetThreadId) = job.destination {
+                openJobThreadIfNeeded(chatStore: chatStore, threadId: targetThreadId)
+                let audioDraft = try await job.session.finalize(allowPartialAfter: shortcutLiveFinalizationDeadline)
+                if audioDraft.isPartial {
+                    DebugLog.runtime(
+                        "shortcut_processing_partial request_id=\(job.requestId) thread_id=\(targetThreadId) audio_session_id=\(job.session.persistedSessionId) failed_chunks=\(audioDraft.failedChunkIndices.map(String.init).joined(separator: ","))"
+                    )
+                }
+                let formattedText = try await ElsonRuntime.shared.formatRawTranscriptForChatComposer(
+                    requestId: job.requestId,
+                    rawTranscript: audioDraft.rawTranscript,
+                    threadId: targetThreadId,
+                    config: job.config,
+                    conversationHistory: conversationHistoryPayload(from: chatStore.thread.messages)
+                )
+                if audioDraft.isPartial {
+                    job.session.markPartialDeliveryAvailable(reason: audioDraft.partialReason)
+                    appSettings.recordReplayableCaptureSession(
+                        sessionId: job.session.persistedSessionId,
+                        errorMessage: "Partial transcript delivered. Replay available."
+                    )
+                    NotificationHelper.showNotification(
+                        title: "Elson.ai",
+                        body: "Partial transcript delivered. Replay available.",
+                        sound: nil
+                    )
+                } else {
+                    job.session.markDeliveryCompleted()
+                }
+                appSettings.indicatorState = .success
+                NotificationCenter.default.post(name: .insertTextIntoThreadComposer, object: formattedText)
+                DebugLog.runtime(
+                    "shortcut_processing_completed request_id=\(job.requestId) thread_id=\(targetThreadId) audio_session_id=\(job.session.persistedSessionId) partial=\(audioDraft.isPartial)"
+                )
+                return
+            }
+
+            let screenContextTask = Task<([Data], (context: LocalScreenContext, durationMS: Int)?), Error> { @MainActor [weak self] in
+                guard let self else { return (job.screenshotData, nil) }
+                var screenshotData = job.screenshotData
+                if screenshotData.isEmpty, let captured = try? await self.captureScreenshotDataIfPossible() {
+                    screenshotData = [captured]
+                }
+                if let prefetched = await job.screenContextPrefetchTask?.value {
+                    return (screenshotData, prefetched)
+                }
+                let prefetched = try await ElsonRuntime.shared.prefetchShortcutScreenContext(
+                    requestId: job.requestId,
+                    surface: "shortcut",
+                    threadId: job.threadId,
+                    config: job.config,
+                    attachments: job.pendingAttachments,
+                    screenshotJPEGData: screenshotData
+                )
+                return (screenshotData, prefetched)
+            }
+
+            var timeline = RequestTimelineSnapshot(
+                requestId: job.requestId,
+                threadId: job.threadId,
+                surface: "shortcut",
+                inputSource: "audio",
+                startedAt: job.requestStartedAt
+            )
+            .addingStage(.audioCaptureFinalize, durationMS: job.audioCaptureDurationMS)
+
+            let groqStartedAt = Date()
+            let audioDraft = try await job.session.finalize(allowPartialAfter: shortcutLiveFinalizationDeadline)
+            let groqDurationMS = Int(Date().timeIntervalSince(groqStartedAt) * 1000)
+            timeline = timeline.addingStage(.groqTranscription, durationMS: groqDurationMS, countTowardProvider: true)
+            DebugLog.requestMilestone(timeline, name: "recording_stopped")
+            if audioDraft.firstChunkTranscriptionCompletedAt != nil {
+                DebugLog.requestMilestone(timeline, name: "first_chunk_transcription_completed")
+            }
+            if audioDraft.isPartial {
+                DebugLog.runtime(
+                    "shortcut_processing_partial request_id=\(job.requestId) thread_id=\(job.threadId) audio_session_id=\(job.session.persistedSessionId) failed_chunks=\(audioDraft.failedChunkIndices.map(String.init).joined(separator: ","))"
+                )
+            }
+
+            openJobThreadIfNeeded(chatStore: chatStore, threadId: job.threadId)
+            chatStore.append(
+                ChatMessage(
+                    id: job.optimisticMessageId,
+                    role: .user,
+                    content: "Voice message...",
+                    style: .voiceTranscript,
+                    rawTranscript: audioDraft.rawTranscript,
+                    captureSessionId: job.session.persistedSessionId
+                )
+            )
+            chatStore.beginRun(threadId: job.threadId, mode: job.optimisticTarget, optimisticUserMessageId: job.optimisticMessageId)
+
+            let prefetchedScreenContextResult = try await screenContextTask.value
+            let screenshotData = prefetchedScreenContextResult.0
+            let prefetchedScreenContext = prefetchedScreenContextResult.1
+            if let prefetchedScreenContext {
+                timeline = timeline.addingStage(
+                    .screenContext,
+                    durationMS: prefetchedScreenContext.durationMS,
+                    countTowardProvider: true
+                )
+            }
+            let result = try await ElsonRuntime.shared.processAudioTranscriptWithRetry(
+                requestId: job.requestId,
+                rawTranscript: audioDraft.rawTranscript,
+                snippetCount: audioDraft.snippetCount,
+                transcriptChunkTimings: audioDraft.transcriptChunkTimings,
+                mode: job.runtimeMode ?? .transcription,
+                surface: "shortcut",
+                threadId: job.threadId,
+                config: job.config,
+                clipboardText: job.clipboardText,
+                attachments: job.pendingAttachments,
+                screenshotJPEGData: screenshotData,
+                prefetchedDeciderScreenContext: prefetchedScreenContext?.context,
+                audioLatencyContext: AudioLatencyContext(
+                    shortcutDetectedAt: job.latencyState?.shortcutDetectedAt,
+                    microphonePermissionStartedAt: job.latencyState?.microphonePermissionStartedAt,
+                    microphonePermissionGrantedAt: job.latencyState?.microphonePermissionGrantedAt,
+                    recordingStartedAt: job.latencyState?.recordingStartedAt,
+                    recordingStoppedAt: audioDraft.recordingStoppedAt,
+                    firstChunkTranscriptionCompletedAt: audioDraft.firstChunkTranscriptionCompletedAt
+                )
+            )
+            let desktopActionsStartedAt = Date()
+            let actionNotes = await DesktopActionExecutor.execute(result.actions, appSettings: appSettings)
+            let desktopActionsDurationMS = Int(Date().timeIntervalSince(desktopActionsStartedAt) * 1000)
+            timeline = result.timeline
+                .withThreadId(result.responseThreadId ?? job.threadId)
+                .addingStage(.audioCaptureFinalize, durationMS: timeline.stageDurationsMS[RequestTimelineStage.audioCaptureFinalize.rawValue] ?? 0)
+                .addingStage(.groqTranscription, durationMS: timeline.stageDurationsMS[RequestTimelineStage.groqTranscription.rawValue] ?? 0, countTowardProvider: true)
+                .addingStage(.screenContext, durationMS: timeline.stageDurationsMS[RequestTimelineStage.screenContext.rawValue] ?? 0, countTowardProvider: true)
+                .addingStage(.desktopActions, durationMS: desktopActionsDurationMS)
+            let capturedNewScreenshot = result.actions.contains { $0.type == "capture_screenshot" }
+            let correctionSeed = result.postResponseCorrectionSeed
+
+            let uiCommitStartedAt = Date()
+            var clipboardResult = ClipboardOperationResult.empty
+            var visibleOutputCommittedAt: Date?
+            let captureSessionId = job.session.persistedSessionId
+            let effectiveThreadId = result.responseThreadId ?? job.threadId
+            let assistantMessageId = UUID()
+            let userAttachments = persistUserAttachmentsIfNeeded(
+                result: result,
+                screenshotJPEGData: screenshotData,
+                threadId: effectiveThreadId,
+                messageId: job.optimisticMessageId
+            )
+            if audioDraft.isPartial {
+                job.session.markPartialDeliveryAvailable(reason: audioDraft.partialReason)
+            } else {
+                job.session.markDeliveryCompleted()
+            }
+            openJobThreadIfNeeded(chatStore: chatStore, threadId: job.threadId)
+            if effectiveThreadId != job.threadId {
+                chatStore.adoptThreadIdPreservingMessages(newId: effectiveThreadId)
+            }
+            if !actionNotes.isEmpty {
+                print(actionNotes.joined(separator: " "))
+            }
+            chatStore.replaceMessage(
+                id: job.optimisticMessageId,
+                role: .user,
+                style: .voiceTranscript,
+                rawTranscript: result.rawTranscript,
+                overrideRawTranscript: true,
+                captureSessionId: captureSessionId,
+                overrideCaptureSessionId: true,
+                attachments: userAttachments,
+                showsAttachmentChip: !userAttachments.isEmpty,
+                with: result.transcript.isEmpty ? "Voice message..." : result.transcript
+            )
+            chatStore.append(
+                ChatMessage(
+                    id: assistantMessageId,
+                    role: .assistant,
+                    content: result.replyText,
+                    insertedText: result.clipboardText,
+                    feedbackSubject: result.feedbackSubject
+                )
+            )
+            chatStore.endRun(threadId: job.threadId)
+            appSettings.recordLastOutput(from: result, captureSessionId: captureSessionId)
+            if audioDraft.isPartial {
+                appSettings.recordReplayableCaptureSession(
+                    sessionId: captureSessionId,
+                    errorMessage: "Partial transcript delivered. Replay available."
+                )
+                NotificationHelper.showNotification(
+                    title: "Elson.ai",
+                    body: "Partial transcript delivered. Replay available.",
+                    sound: nil
+                )
+            }
+            if job.runtimeMode == .agent {
+                chatStore.noteConversationActivity(
+                    threadId: effectiveThreadId,
+                    lastMessage: result.replyText,
+                    lastRole: "assistant",
+                    lastReplyTarget: result.replyMode,
+                    sessionKey: result.sessionKey,
+                    markUnread: false
+                )
+            }
+            if !result.replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                appSettings.appendTranscriptHistory(
+                    text: result.replyText,
+                    rawTranscript: result.rawTranscript,
+                    source: "shortcut",
+                    threadId: effectiveThreadId,
+                    replyMode: result.replyMode,
+                    actualRoute: result.actualRoute,
+                    routingSource: result.routingSource,
+                    forcedRouteReason: result.forcedRouteReason,
+                    requestId: result.requestId,
+                    captureSessionId: captureSessionId
+                )
+            }
+            visibleOutputCommittedAt = Date()
+            clipboardResult = ClipboardHelper.deliverTranscriptDetailed(
+                result.clipboardText,
+                behavior: appSettings.transcriptClipboardBehavior()
+            )
+            appSettings.indicatorState = job.runtimeMode == .agent ? .agentSuccess : .success
+            appSettings.clearAgentAttachments()
+            if !capturedNewScreenshot {
+                appSettings.pendingScreenshotJPEGData = []
+            }
+            if let updatedMyElsonMarkdown = result.updatedMyElsonMarkdown {
+                appSettings.applyAgentMyElsonMarkdownUpdate(updatedMyElsonMarkdown)
+            }
+
+            let uiCommitDurationMS = Int(Date().timeIntervalSince(uiCommitStartedAt) * 1000)
+            timeline = timeline
+                .withThreadId(result.responseThreadId ?? job.threadId)
+                .addingStage(.uiCommit, durationMS: uiCommitDurationMS)
+                .addingMetric(
+                    "latency_hotkey_to_recording_start_ms",
+                    valueMS: durationMS(from: job.latencyState?.shortcutDetectedAt, to: job.latencyState?.recordingStartedAt)
+                )
+                .addingMetric(
+                    "latency_recording_stop_to_first_stt_ms",
+                    valueMS: nonNegativeDurationMS(from: audioDraft.recordingStoppedAt, to: audioDraft.firstChunkTranscriptionCompletedAt)
+                )
+                .addingMetric(
+                    "latency_recording_stop_to_visible_ms",
+                    valueMS: durationMS(from: audioDraft.recordingStoppedAt, to: visibleOutputCommittedAt)
+                )
+                .addingMetric(
+                    "latency_visible_to_clipboard_ms",
+                    valueMS: durationMS(from: visibleOutputCommittedAt, to: clipboardResult.copyCompletedAt)
+                )
+                .addingMetric(
+                    "latency_visible_to_autopaste_ms",
+                    valueMS: durationMS(from: visibleOutputCommittedAt, to: clipboardResult.pasteCompletedAt)
+                )
+                .addingMetric(
+                    "latency_hotkey_to_autopaste_ms",
+                    valueMS: durationMS(from: job.latencyState?.shortcutDetectedAt, to: clipboardResult.pasteCompletedAt)
+                )
+                .withVisibleLatencyMS(Int(Date().timeIntervalSince(job.requestStartedAt) * 1000))
+            if visibleOutputCommittedAt != nil {
+                DebugLog.requestMilestone(timeline, name: "visible_output_committed")
+            }
+            if clipboardResult.copied {
+                DebugLog.requestMilestone(timeline, name: "clipboard_copy_completed")
+            }
+            if clipboardResult.autoPasted {
+                DebugLog.requestMilestone(timeline, name: "autopaste_completed")
+            }
+            DebugLog.requestTimeline(timeline)
+            PostResponseCorrectionCoordinator.shared.schedule(
+                seed: correctionSeed,
+                config: job.config,
+                appSettings: appSettings
+            )
+            DebugLog.runtime(
+                "shortcut_processing_completed request_id=\(job.requestId) thread_id=\(effectiveThreadId) audio_session_id=\(captureSessionId) partial=\(audioDraft.isPartial)"
+            )
+        } catch {
+            handleShortcutProcessingFailure(job: job, error: error, appSettings: appSettings, chatStore: chatStore)
+        }
+    }
+
+    private func handleShortcutProcessingFailure(
+        job: ShortcutProcessingJob,
+        error: Error,
+        appSettings: AppSettings,
+        chatStore: ChatStore
+    ) {
+        DebugLog.runtimeError(
+            "shortcut_processing_failed request_id=\(job.requestId) thread_id=\(job.threadId) audio_session_id=\(job.session.persistedSessionId) error=\(error.localizedDescription)"
+        )
+        let captureSessionId = job.session.persistedSessionId
+        let archivedRawTranscript = LocalCapturedAudioSessionStore().rawTranscript(sessionId: captureSessionId)
+        let friendlyMessage = userFacingShortcutErrorMessage(error.localizedDescription)
+        let noSpeechDetected = isNoSpeechDetectedMessage(friendlyMessage)
+        if !noSpeechDetected {
+            appSettings.recordCaptureFailure(sessionId: captureSessionId, errorMessage: friendlyMessage)
+        }
+        if case .runtime = job.destination, !noSpeechDetected {
+            openJobThreadIfNeeded(chatStore: chatStore, threadId: job.threadId)
+            let userContent = archivedRawTranscript ?? "Voice message"
+            if chatStore.containsMessage(id: job.optimisticMessageId) {
+                chatStore.replaceMessage(
+                    id: job.optimisticMessageId,
+                    role: .user,
+                    style: .voiceTranscript,
+                    rawTranscript: archivedRawTranscript,
+                    overrideRawTranscript: true,
+                    captureSessionId: captureSessionId,
+                    overrideCaptureSessionId: true,
+                    with: userContent
+                )
+            } else {
+                chatStore.append(
+                    ChatMessage(
+                        id: job.optimisticMessageId,
+                        role: .user,
+                        content: userContent,
+                        style: .voiceTranscript,
+                        rawTranscript: archivedRawTranscript,
+                        captureSessionId: captureSessionId
+                    )
+                )
+            }
+            chatStore.append(ChatMessage(role: .assistant, content: friendlyMessage))
+            chatStore.endRun(threadId: job.threadId)
+            chatStore.noteConversationActivity(
+                threadId: job.threadId,
+                lastMessage: friendlyMessage,
+                lastRole: "assistant",
+                lastReplyTarget: job.optimisticTarget.rawValue,
+                markUnread: false
+            )
+        } else if noSpeechDetected {
+            openJobThreadIfNeeded(chatStore: chatStore, threadId: job.threadId)
+            if chatStore.containsMessage(id: job.optimisticMessageId) {
+                chatStore.removeMessage(id: job.optimisticMessageId)
+            }
+            chatStore.endRun(threadId: job.threadId)
+        }
+        appSettings.indicatorState = noSpeechDetected ? .idle : .error
+        NotificationHelper.showNotification(
+            title: "Elson.ai",
+            body: friendlyMessage,
+            sound: .default
+        )
+    }
+
+    private func openJobThreadIfNeeded(chatStore: ChatStore, threadId: String) {
+        guard chatStore.thread.id != threadId else { return }
+        chatStore.openPersistedThread(id: threadId)
     }
 
     private func userFacingShortcutErrorMessage(_ message: String) -> String {
         let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
         let lowercased = trimmed.lowercased()
 
+        if lowercased == "transcription failed. replay available." {
+            return "Transcription failed. Replay available."
+        }
+        if lowercased == "partial transcript delivered. replay available." {
+            return "Partial transcript delivered. Replay available."
+        }
+        if lowercased == "recording is already active." {
+            return "Recording is already active."
+        }
         if lowercased.contains("invalid api key") || lowercased.contains("invalid_api_key") {
             return "Groq API key is invalid. Update it in Settings > API Keys."
         }
@@ -915,7 +1074,7 @@ final class KeyboardService {
         shortcutRunScreenshotJPEGData = []
         shortcutScreenContextPrefetchTask?.cancel()
         shortcutScreenContextPrefetchTask = nil
-        shortcutDeliveryInFlight = false
+        shortcutCaptureInFlight = false
         appSettings.isRecording = false
         appSettings.indicatorState = .idle
         chatStore.endRun(threadId: activeThreadId)

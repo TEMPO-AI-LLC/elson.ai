@@ -2,7 +2,6 @@
 .build
 .swiftpm
 Elson/build/
-Tests/
 .omx/logs/
 .omx/state/
 .omx/metrics.json

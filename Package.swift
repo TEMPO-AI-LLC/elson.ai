@@ -137,5 +137,10 @@ let package = Package(
             ],
             swiftSettings: buildVariant.swiftSettings
         ),
+        .testTarget(
+            name: "ElsonTests",
+            dependencies: ["Elson"],
+            path: "Tests/ElsonTests"
+        ),
     ]
 )

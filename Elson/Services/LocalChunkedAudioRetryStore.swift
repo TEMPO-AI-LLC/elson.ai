@@ -3,6 +3,9 @@ import Foundation
 struct PersistedLocalChunkedAudioDraft: Codable, Equatable, Sendable {
     let rawTranscript: String
     let snippetCount: Int
+    var isPartial: Bool? = nil
+    var failedChunkIndices: [Int]? = nil
+    var partialReason: String? = nil
 }
 
 struct PersistedLocalChunkedAudioRecord: Codable, Equatable, Sendable {

@@ -109,8 +109,33 @@ struct PromptLearningResult: Hashable, Sendable {
     let reason: String
 }
 
+protocol LocalAudioTranscribing: Sendable {
+    func transcribeDetailed(
+        audioURL: URL,
+        groqAPIKey: String,
+        logContext: LocalRequestLogContext?,
+        extraMetadata: String
+    ) async throws -> LocalTranscriptionResult
+}
+
 struct LocalAIService: Sendable {
-    private let session: URLSession = .shared
+    private let session: URLSession
+    private let transcriptionSession: URLSession
+
+    init(
+        session: URLSession = .shared,
+        transcriptionSession: URLSession = LocalAIService.makeTranscriptionURLSession()
+    ) {
+        self.session = session
+        self.transcriptionSession = transcriptionSession
+    }
+
+    private static func makeTranscriptionURLSession() -> URLSession {
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 15
+        configuration.timeoutIntervalForResource = 25
+        return URLSession(configuration: configuration)
+    }
 
     func validateGroqAPIKey(_ groqAPIKey: String) async throws {
         let sanitized = groqAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -279,7 +304,7 @@ struct LocalAIService: Sendable {
         )
 
         do {
-            let (data, response) = try await session.data(for: request)
+            let (data, response) = try await transcriptionSession.data(for: request)
             do {
                 try validate(response: response, data: data, service: "Groq transcription")
             } catch {
@@ -2394,6 +2419,8 @@ struct LocalAIService: Sendable {
         return text
     }
 }
+
+extension LocalAIService: LocalAudioTranscribing {}
 
 enum LocalAIServiceError: LocalizedError {
     case missingGroqKey

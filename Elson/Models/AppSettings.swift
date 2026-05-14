@@ -649,6 +649,7 @@ final class AppSettings {
         lastOutputSnapshot = snapshot
         if let captureSessionId {
             lastReplayableCaptureSessionId = captureSessionId
+            lastReplayErrorMessage = nil
         }
     }
 
@@ -665,14 +666,55 @@ final class AppSettings {
             status: .failed,
             errorMessage: errorMessage
         )
+        return recordReplayableCaptureSession(sessionId: sessionId, errorMessage: errorMessage)
+    }
+
+    @discardableResult
+    func recordReplayableCaptureSession(sessionId: String?, errorMessage: String? = nil) -> Bool {
+        guard let sessionId = sessionId?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !sessionId.isEmpty
+        else {
+            return false
+        }
+
         lastReplayableCaptureSessionId = sessionId
         lastReplayErrorMessage = errorMessage
         refreshCapturedAudioSessions()
         return true
     }
 
-    func refreshCapturedAudioSessions() {
+    func refreshCapturedAudioSessions(selectNewestRecoverable: Bool = false) {
         capturedAudioSessions = LocalCapturedAudioSessionStore().recentSessions(limit: 50)
+        if selectNewestRecoverable {
+            let newestRecoverable = capturedAudioSessions.first(where: isRecoverableCaptureSession)
+            lastReplayableCaptureSessionId = newestRecoverable?.sessionId
+            lastReplayErrorMessage = newestRecoverable?.errorMessage
+            return
+        }
+        if let replaySessionId = lastReplayableCaptureSessionId,
+           !capturedAudioSessions.contains(where: { $0.sessionId == replaySessionId }) {
+            lastReplayableCaptureSessionId = nil
+            lastReplayErrorMessage = nil
+        }
+    }
+
+    private func isRecoverableCaptureSession(_ snapshot: LocalCapturedAudioSessionSnapshot) -> Bool {
+        switch snapshot.status {
+        case .ready, .partial, .failed:
+            return captureSessionHasReplayMaterial(snapshot)
+        case .recording, .stopped, .transcribing, .delivered, .cancelled:
+            return false
+        }
+    }
+
+    private func captureSessionHasReplayMaterial(_ snapshot: LocalCapturedAudioSessionSnapshot) -> Bool {
+        let rawTranscript = snapshot.rawTranscript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !rawTranscript.isEmpty { return true }
+
+        let candidatePaths = [snapshot.rawTranscriptFilePath, snapshot.audioFilePath]
+            .compactMap { $0 }
+            + snapshot.chunkAudioFilePaths
+        return candidatePaths.contains { FileManager.default.fileExists(atPath: $0) }
     }
 
     func purgeCapturedAudioSessions() {
@@ -937,6 +979,9 @@ final class AppSettings {
     private func userFacingReplayErrorMessage(_ message: String) -> String {
         let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
         let lowercased = trimmed.lowercased()
+        if lowercased == "transcription failed. replay available." {
+            return "Transcription failed. Replay available."
+        }
         if isNoSpeechDetectedMessage(trimmed) || lowercased.contains("no usable transcript") {
             return "No speech detected."
         }
@@ -1409,7 +1454,7 @@ final class AppSettings {
         print("[SETTINGS] hasRequiredAPIKeys=\(hasRequiredAPIKeys) didCompleteOnboarding=\(didCompleteOnboarding) needsInstallOnboarding=\(needsInstallOnboarding)")
         print("[SETTINGS] ═══════════════════════════════════════════")
         transcriptHistory = TranscriptHistoryStore.shared.load()
-        refreshCapturedAudioSessions()
+        refreshCapturedAudioSessions(selectNewestRecoverable: true)
         lastOutputSnapshot = nil
         activeFeedbackContext = nil
 

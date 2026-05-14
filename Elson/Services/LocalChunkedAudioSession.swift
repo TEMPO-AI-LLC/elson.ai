@@ -1,11 +1,27 @@
 import AVFoundation
 import Foundation
 
+@MainActor
+protocol ChunkedAudioRecording: AnyObject {
+    var activeRecordingStartedAt: Date? { get }
+
+    func startChunkedRecording(
+        chunkDuration: TimeInterval,
+        startingIndex: Int,
+        onChunk: @escaping (AudioRecordingService.AudioChunk) -> Void
+    ) -> Bool
+
+    func stopChunkedRecording() -> AudioRecordingService.AudioChunk?
+}
+
+extension AudioRecordingService: ChunkedAudioRecording {}
+
 enum LocalChunkedAudioSessionError: LocalizedError {
     case notRecording
     case missingFinalChunk
     case notStopped
     case emptyTranscript
+    case noUsableTranscript
     case chunkTranscriptionFailed(Int, String)
 
     var errorDescription: String? {
@@ -18,6 +34,8 @@ enum LocalChunkedAudioSessionError: LocalizedError {
             return "Audio session must be stopped before finalizing."
         case .emptyTranscript:
             return "No speech detected."
+        case .noUsableTranscript:
+            return "Transcription failed. Replay available."
         case let .chunkTranscriptionFailed(index, message):
             return "Chunk \(index + 1) transcription failed: \(message)"
         }
@@ -31,6 +49,9 @@ struct LocalChunkedAudioDraft: Sendable {
     let recordingStartedAt: Date?
     let recordingStoppedAt: Date?
     let firstChunkTranscriptionCompletedAt: Date?
+    let isPartial: Bool
+    let failedChunkIndices: [Int]
+    let partialReason: String?
 }
 
 @MainActor
@@ -61,11 +82,17 @@ final class LocalChunkedAudioSession {
         var completedAt: Date?
     }
 
-    private let recordingService: AudioRecordingService
+    private enum ChunkWaitEvent {
+        case completed(Int)
+        case failed(Int, String)
+        case deadline
+    }
+
+    private let recordingService: any ChunkedAudioRecording
     private let groqAPIKey: String
     private let chunkDuration: TimeInterval
     private let transcriptionOverlapDuration: TimeInterval
-    private let aiService = LocalAIService()
+    private let transcriber: any LocalAudioTranscribing
     private let retryStore: LocalChunkedAudioRetryStore
     private let archiveStore: LocalCapturedAudioSessionStore
     private let sessionId = UUID().uuidString
@@ -80,14 +107,16 @@ final class LocalChunkedAudioSession {
     private var chunkRecords: [Int: ChunkRecord] = [:]
     private var finalizedDraft: LocalChunkedAudioDraft?
     private var stoppedAt: Date?
+    private var ignoredChunkTaskIndices: Set<Int> = []
 
     init(
-        recordingService: AudioRecordingService,
+        recordingService: any ChunkedAudioRecording,
         groqAPIKey: String,
         chunkDuration: TimeInterval = 25,
         transcriptionOverlapDuration: TimeInterval = 5,
         modeHint: InteractionMode? = nil,
         requestLogContext: LocalRequestLogContext? = nil,
+        transcriber: any LocalAudioTranscribing = LocalAIService(),
         retryStore: LocalChunkedAudioRetryStore = LocalChunkedAudioRetryStore(),
         archiveStore: LocalCapturedAudioSessionStore = LocalCapturedAudioSessionStore()
     ) {
@@ -97,6 +126,7 @@ final class LocalChunkedAudioSession {
         self.transcriptionOverlapDuration = transcriptionOverlapDuration
         self.modeHint = modeHint
         self.requestLogContext = requestLogContext
+        self.transcriber = transcriber
         self.retryStore = retryStore
         self.archiveStore = archiveStore
     }
@@ -123,6 +153,7 @@ final class LocalChunkedAudioSession {
         chunkRecords = [:]
         nextChunkIndex = 0
         stoppedAt = nil
+        ignoredChunkTaskIndices = []
 
         let started = recordingService.startChunkedRecording(
             chunkDuration: chunkDuration,
@@ -253,7 +284,7 @@ final class LocalChunkedAudioSession {
         return true
     }
 
-    func finalize() async throws -> LocalChunkedAudioDraft {
+    func finalize(allowPartialAfter partialDeadline: TimeInterval? = nil) async throws -> LocalChunkedAudioDraft {
         if let finalizedDraft {
             return finalizedDraft
         }
@@ -281,18 +312,12 @@ final class LocalChunkedAudioSession {
             chunkTasks[index].map { (index, $0) }
         }
 
-        for (index, task) in tasks {
-            do {
-                _ = try await task.value
-            } catch {
-                DebugLog.runtimeError(
-                    "audio_chunk_finalize_retry_needed audio_session_id=\(sessionId) session_start_at=\(isoTimestamp(startedAt)) chunk_index=\(index) error=\(error.localizedDescription)"
-                )
-            }
-        }
+        let deadlineTimedOutChunkIndices = await waitForChunkTasks(tasks, partialDeadline: partialDeadline)
         chunkTasks = [:]
 
-        try await retryIncompleteChunks()
+        if partialDeadline == nil {
+            try await retryIncompleteChunks()
+        }
 
         let orderedRecords = chunkRecords.values
             .sorted { $0.index < $1.index }
@@ -309,15 +334,26 @@ final class LocalChunkedAudioSession {
             archiveStore.markStatus(
                 sessionId: sessionId,
                 status: .failed,
-                errorMessage: LocalChunkedAudioSessionError.emptyTranscript.localizedDescription
+                errorMessage: partialDeadline == nil
+                    ? LocalChunkedAudioSessionError.emptyTranscript.localizedDescription
+                    : LocalChunkedAudioSessionError.noUsableTranscript.localizedDescription
             )
             DebugLog.runtimeError(
                 "audio_chunk_finalize_failed audio_session_id=\(sessionId) session_start_at=\(isoTimestamp(startedAt)) reason=empty_transcript"
             )
-            throw LocalChunkedAudioSessionError.emptyTranscript
+            throw partialDeadline == nil
+                ? LocalChunkedAudioSessionError.emptyTranscript
+                : LocalChunkedAudioSessionError.noUsableTranscript
         }
 
         let transcriptChunkTimings = makeTranscriptChunkTimings(from: orderedRecords)
+        let failedChunkIndices = orderedRecords
+            .filter { record in
+                record.status == .failed || deadlineTimedOutChunkIndices.contains(record.index)
+            }
+            .map(\.index)
+        let isPartial = partialDeadline != nil && !failedChunkIndices.isEmpty
+        let partialReason = isPartial ? "transcription_deadline_or_chunk_failure" : nil
         let draft = LocalChunkedAudioDraft(
             rawTranscript: rawTranscript,
             snippetCount: orderedSnippets.count,
@@ -326,7 +362,10 @@ final class LocalChunkedAudioSession {
             recordingStoppedAt: stoppedAt,
             firstChunkTranscriptionCompletedAt: chunkRecords.values
                 .compactMap(\.completedAt)
-                .min()
+                .min(),
+            isPartial: isPartial,
+            failedChunkIndices: failedChunkIndices,
+            partialReason: partialReason
         )
         finalizedDraft = draft
         do {
@@ -335,7 +374,9 @@ final class LocalChunkedAudioSession {
                 rawTranscript: rawTranscript,
                 snippetCount: orderedSnippets.count,
                 transcriptChunkTimings: transcriptChunkTimings,
-                status: .ready
+                status: isPartial ? .partial : .ready,
+                isPartial: isPartial,
+                partialReason: partialReason
             )
         } catch {
             DebugLog.runtimeError(
@@ -353,13 +394,86 @@ final class LocalChunkedAudioSession {
                 ),
                 stage: .groqTranscription,
                 durationMS: Int(Date().timeIntervalSince(stageStartedAt) * 1000),
-                metadata: "audio_session_id=\(sessionId) snippet_count=\(orderedSnippets.count)"
+                metadata: "audio_session_id=\(sessionId) snippet_count=\(orderedSnippets.count) partial=\(isPartial)"
             )
         }
         DebugLog.runtime(
-            "audio_chunk_finalize_completed audio_session_id=\(sessionId) session_start_at=\(isoTimestamp(startedAt)) snippet_count=\(orderedSnippets.count) transcript_chars=\(rawTranscript.count)"
+            "audio_chunk_finalize_completed audio_session_id=\(sessionId) session_start_at=\(isoTimestamp(startedAt)) snippet_count=\(orderedSnippets.count) transcript_chars=\(rawTranscript.count) partial=\(isPartial) failed_chunks=\(failedChunkIndices.map(String.init).joined(separator: ","))"
         )
         return draft
+    }
+
+    private func waitForChunkTasks(
+        _ tasks: [(index: Int, task: Task<String, Error>)],
+        partialDeadline: TimeInterval?
+    ) async -> Set<Int> {
+        guard !tasks.isEmpty else { return [] }
+        guard let partialDeadline else {
+            for (index, task) in tasks {
+                do {
+                    _ = try await task.value
+                } catch {
+                    DebugLog.runtimeError(
+                        "audio_chunk_finalize_retry_needed audio_session_id=\(sessionId) session_start_at=\(isoTimestamp(startedAt)) chunk_index=\(index) error=\(error.localizedDescription)"
+                    )
+                }
+            }
+            return []
+        }
+
+        let timeoutNanoseconds = UInt64(max(0, partialDeadline) * 1_000_000_000)
+        let stream = AsyncStream<ChunkWaitEvent> { continuation in
+            for (index, task) in tasks {
+                Task {
+                    do {
+                        _ = try await task.value
+                        continuation.yield(.completed(index))
+                    } catch {
+                        continuation.yield(.failed(index, error.localizedDescription))
+                    }
+                }
+            }
+
+            Task {
+                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                continuation.yield(.deadline)
+            }
+        }
+
+        var pendingIndices = Set(tasks.map(\.index))
+        var timedOutIndices: Set<Int> = []
+
+        for await event in stream {
+            switch event {
+            case let .completed(index):
+                pendingIndices.remove(index)
+            case let .failed(index, message):
+                pendingIndices.remove(index)
+                DebugLog.runtimeError(
+                    "audio_chunk_finalize_partial_candidate_failed audio_session_id=\(sessionId) session_start_at=\(isoTimestamp(startedAt)) chunk_index=\(index) error=\(message)"
+                )
+            case .deadline:
+                timedOutIndices = pendingIndices
+                for index in timedOutIndices {
+                    if let task = chunkTasks[index] {
+                        task.cancel()
+                    }
+                    markChunkTimedOut(index: index, deadline: partialDeadline)
+                }
+                if !timedOutIndices.isEmpty {
+                    DebugLog.runtimeError(
+                        "audio_chunk_finalize_deadline_reached audio_session_id=\(sessionId) session_start_at=\(isoTimestamp(startedAt)) deadline_s=\(String(format: "%.1f", partialDeadline)) timed_out_chunks=\(timedOutIndices.sorted().map(String.init).joined(separator: ","))"
+                    )
+                }
+                break
+            }
+
+            if pendingIndices.isEmpty {
+                break
+            }
+        }
+
+        return timedOutIndices
     }
 
     func markDeliveryCompleted() {
@@ -371,6 +485,21 @@ final class LocalChunkedAudioSession {
         cleanupPersistedSession()
         archiveStore.markStatus(sessionId: sessionId, status: .delivered)
         DebugLog.runtime("audio_chunk_delivery_completed audio_session_id=\(sessionId)")
+    }
+
+    func markPartialDeliveryAvailable(reason: String?) {
+        cancelPendingChunkTasks()
+        finalizedDraft = nil
+        startedAt = nil
+        stoppedAt = nil
+        state = .idle
+        cleanupPersistedSession()
+        archiveStore.markStatus(
+            sessionId: sessionId,
+            status: .partial,
+            errorMessage: reason ?? "Partial transcript delivered. Replay available."
+        )
+        DebugLog.runtime("audio_chunk_partial_delivery_available audio_session_id=\(sessionId)")
     }
 
     func cancel() {
@@ -441,14 +570,20 @@ final class LocalChunkedAudioSession {
         chunkTasks[chunk.index] = task
     }
 
-    private func cancelPendingTasks() {
+    private func cancelPendingChunkTasks() {
         chunkTasks.values.forEach { $0.cancel() }
         chunkTasks = [:]
+    }
+
+    private func cancelPendingTasks() {
+        cancelPendingChunkTasks()
         chunkRecords = [:]
         nextChunkIndex = 0
+        ignoredChunkTaskIndices = []
     }
 
     private func markChunkTranscribing(index: Int) {
+        guard !ignoredChunkTaskIndices.contains(index) else { return }
         guard var record = chunkRecords[index] else { return }
         record.status = .transcribing
         record.errorMessage = nil
@@ -461,6 +596,7 @@ final class LocalChunkedAudioSession {
     }
 
     private func markChunkCompleted(index: Int, transcript: String) {
+        guard !ignoredChunkTaskIndices.contains(index) else { return }
         guard var record = chunkRecords[index] else { return }
         record.status = .completed
         record.transcript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -475,6 +611,7 @@ final class LocalChunkedAudioSession {
     }
 
     private func markChunkFailed(index: Int, error: Error) {
+        guard !ignoredChunkTaskIndices.contains(index) else { return }
         guard var record = chunkRecords[index] else { return }
         record.status = .failed
         record.errorMessage = error.localizedDescription
@@ -485,6 +622,18 @@ final class LocalChunkedAudioSession {
         DebugLog.runtimeError(
             "audio_chunk_transcription_failed audio_session_id=\(sessionId) session_start_at=\(isoTimestamp(startedAt)) chunk_index=\(index) snippet_count=\(chunkRecords.count) error=\(error.localizedDescription)"
         )
+    }
+
+    private func markChunkTimedOut(index: Int, deadline: TimeInterval) {
+        guard var record = chunkRecords[index] else { return }
+        let message = "Transcription timed out after \(String(format: "%.1f", deadline)) seconds."
+        record.status = .failed
+        record.errorMessage = message
+        record.completedAt = Date()
+        chunkRecords[index] = record
+        ignoredChunkTaskIndices.insert(index)
+        archiveStore.markStatus(sessionId: sessionId, status: .failed, errorMessage: message)
+        persistSessionSnapshot()
     }
 
     private func retryIncompleteChunks() async throws {
@@ -528,7 +677,7 @@ final class LocalChunkedAudioSession {
 
         while true {
             do {
-                let result = try await aiService.transcribeDetailed(
+                let result = try await transcriber.transcribeDetailed(
                     audioURL: audioURL,
                     groqAPIKey: groqAPIKey,
                     logContext: requestLogContext,
@@ -724,7 +873,10 @@ final class LocalChunkedAudioSession {
             finalizedDraft: finalizedDraft.map {
                 PersistedLocalChunkedAudioDraft(
                     rawTranscript: $0.rawTranscript,
-                    snippetCount: $0.snippetCount
+                    snippetCount: $0.snippetCount,
+                    isPartial: $0.isPartial,
+                    failedChunkIndices: $0.failedChunkIndices,
+                    partialReason: $0.partialReason
                 )
             }
         )
