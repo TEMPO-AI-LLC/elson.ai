@@ -1804,7 +1804,7 @@ struct LocalAIService: Sendable {
         return nil
     }
 
-    private func extractJSONData(from content: String) -> Data? {
+    func extractJSONData(from content: String) -> Data? {
         if let directData = content.data(using: .utf8),
            (try? JSONSerialization.jsonObject(with: directData)) != nil {
             return directData
@@ -1964,7 +1964,7 @@ struct LocalAIService: Sendable {
         }
     }
 
-    private func normalizedAgentDecision(from jsonData: Data) -> AgentDecision {
+    func normalizedAgentDecision(from jsonData: Data) -> AgentDecision {
         let rawDecision = (try? JSONDecoder().decode(LocalAgentDecisionResponse.self, from: jsonData))
             ?? LocalAgentDecisionResponse(
                 outcomeType: nil,

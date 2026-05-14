@@ -2,11 +2,10 @@ import Foundation
 
 struct WorkingAgentTransport: RuntimeTransport {
     func send(_ request: ElsonRequestEnvelope, config: ElsonLocalConfig) async throws -> ElsonResponseEnvelope {
-        let decision = try await LocalAIService().runWorkingAgent(
+        let decision = try await LocalProcessingRouter.runWorkingAgent(
             request: request,
-            provider: .google,
-            cerebrasAPIKey: config.cerebrasAPIKey,
-            geminiAPIKey: config.geminiAPIKey
+            config: config,
+            hostedProvider: .google
         )
 
         let updatedMyElsonMarkdown: String? = {

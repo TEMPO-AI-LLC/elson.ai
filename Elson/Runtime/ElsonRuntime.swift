@@ -139,7 +139,6 @@ final class ElsonRuntime: @unchecked Sendable {
         screenshotJPEGData: [Data] = [],
         conversationHistory: [ElsonConversationTurnPayload] = []
     ) async throws -> RuntimeExecutionResult {
-        let aiService = LocalAIService()
         let resolvedRequestId = requestId ?? UUID().uuidString
         let requestAttachments = makeAttachmentsPayload(attachments: attachments, screenshotJPEGData: screenshotJPEGData)
         let transcriptionStartedAt = Date()
@@ -152,9 +151,9 @@ final class ElsonRuntime: @unchecked Sendable {
             ),
             stage: .groqTranscription
         )
-        let rawTranscript = try await aiService.transcribe(
+        let rawTranscript = try await LocalProcessingRouter.transcribe(
             audioURL: audioURL,
-            groqAPIKey: config.groqAPIKey,
+            config: config,
             logContext: LocalRequestLogContext(
                 requestId: resolvedRequestId,
                 threadId: threadId,
@@ -451,11 +450,10 @@ final class ElsonRuntime: @unchecked Sendable {
                     appContext: appContext,
                     continuationContext: nil
                 )
-                let formatted = try await LocalAIService().runTranscriptAgent(
+                let formatted = try await LocalProcessingRouter.runTranscriptAgent(
                     request: makeSpeculativeTranscriptRequest(from: request),
-                    provider: transcriptProvider(),
-                    cerebrasAPIKey: config.cerebrasAPIKey,
-                    geminiAPIKey: config.geminiAPIKey
+                    config: config,
+                    hostedProvider: transcriptProvider()
                 )
                 return PrecomputedTranscriptResult(
                     text: formatted,
@@ -559,11 +557,10 @@ final class ElsonRuntime: @unchecked Sendable {
             conversationHistory: conversationHistory
         )
 
-        return try await LocalAIService().runTranscriptAgent(
+        return try await LocalProcessingRouter.runTranscriptAgent(
             request: request,
-            provider: transcriptProvider(),
-            cerebrasAPIKey: config.cerebrasAPIKey,
-            geminiAPIKey: config.geminiAPIKey
+            config: config,
+            hostedProvider: transcriptProvider()
         )
     }
 
@@ -1128,7 +1125,7 @@ final class ElsonRuntime: @unchecked Sendable {
             return .none
         }
 
-        guard provider == .cerebras else {
+        guard config.runtimeMode == .local || provider == .cerebras else {
             DebugLog.runtime(
                 "screen_context_stage request_id=\(requestId) thread_id=\(threadId) stage=\(stage) provider=\(provider.rawValue) ocr=skipped images=\(images.count)"
             )
@@ -1141,7 +1138,7 @@ final class ElsonRuntime: @unchecked Sendable {
             do {
                 let context = try await extractScreenContext(
                     from: attachments,
-                    groqAPIKey: config.groqAPIKey,
+                    config: config,
                     myElsonMarkdown: myElsonMarkdown,
                     logContext: LocalRequestLogContext(
                         requestId: requestId,
@@ -1176,7 +1173,7 @@ final class ElsonRuntime: @unchecked Sendable {
 
     private func extractScreenContext(
         from attachments: [ElsonAttachmentPayload],
-        groqAPIKey: String,
+        config: ElsonLocalConfig,
         myElsonMarkdown: String,
         logContext: LocalRequestLogContext
     ) async throws -> LocalScreenContext {
@@ -1194,9 +1191,9 @@ final class ElsonRuntime: @unchecked Sendable {
             return .none
         }
 
-        return try await LocalAIService().extractScreenContext(
+        return try await LocalProcessingRouter.extractScreenContext(
             images: images,
-            groqAPIKey: groqAPIKey,
+            config: config,
             myElsonMarkdown: myElsonMarkdown,
             logContext: logContext
         )

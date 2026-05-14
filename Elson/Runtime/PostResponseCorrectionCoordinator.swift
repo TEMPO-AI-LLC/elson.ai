@@ -2,7 +2,11 @@ import Foundation
 
 private actor WordsCorrectionRunner {
     func run(seed: PostResponseCorrectionSeed, config: ElsonLocalConfig) async throws -> WordsCorrectionResult {
-        try await LocalAIService().runWordsCorrection(
+        guard config.runtimeMode == .hosted else {
+            return WordsCorrectionResult(patch: nil, reason: "local_processing_skipped")
+        }
+
+        return try await LocalAIService().runWordsCorrection(
             seed: seed,
             provider: .cerebras,
             cerebrasAPIKey: config.cerebrasAPIKey,
@@ -43,8 +47,9 @@ final class PostResponseCorrectionCoordinator {
             return
         }
 
+        let providerName = config.runtimeMode == .local ? "local" : "cerebras"
         DebugLog.runtime(
-            "words_correction_started request_id=\(refreshedSeed.request.requestId) thread_id=\(refreshedSeed.request.threadId) surface=\(refreshedSeed.request.surface) input_source=\(refreshedSeed.request.inputSource) provider=cerebras"
+            "words_correction_started request_id=\(refreshedSeed.request.requestId) thread_id=\(refreshedSeed.request.threadId) surface=\(refreshedSeed.request.surface) input_source=\(refreshedSeed.request.inputSource) provider=\(providerName)"
         )
 
         Task { @MainActor [runner] in

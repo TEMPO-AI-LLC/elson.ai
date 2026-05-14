@@ -34,6 +34,8 @@ struct ElsonSettingsView: View {
     @State private var isRefreshingSkills = false
     @State private var isSkillsListExpanded = false
     @State private var skillSearchQuery = ""
+    @State private var isPreparingLocalProcessor = false
+    @State private var localProcessorStatusText: String? = nil
 
     private var debugLogsPath: String {
         DebugLog.logsDirectoryURL().path
@@ -77,6 +79,7 @@ struct ElsonSettingsView: View {
         .frame(minWidth: 860, minHeight: 700)
         .onAppear {
             syncAPIKeyDraftsFromSettings()
+            appSettings.refreshLocalProcessorStatus()
             appSettings.refreshCapturedAudioSessions()
             refreshSkills(force: true)
         }
@@ -87,6 +90,14 @@ struct ElsonSettingsView: View {
         }
         .onChange(of: appSettings.skillsEnabled) { _, enabled in
             refreshSkills(force: enabled)
+        }
+        .onChange(of: appSettings.runtimeMode) { _, mode in
+            localProcessorStatusText = nil
+            if mode == .local {
+                appSettings.refreshLocalProcessorStatus()
+            } else {
+                syncAPIKeyDraftsFromSettings()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .showSettingsElsonMDTab)) { _ in
             selectedTab = .myElson
@@ -355,42 +366,46 @@ struct ElsonSettingsView: View {
         @Bindable var appSettings = appSettings
 
         return VStack(spacing: 28) {
-            ElsonSettingsCard(title: "API Keys") {
-                ElsonMaskedAPIKeyEditor(
-                    title: "Groq",
-                    persistedValue: appSettings.groqAPIKey,
-                    draftValue: $groqDraftKey,
-                    isEditing: $isEditingGroqKey,
-                    isSaving: isSavingGroqKey,
-                    statusText: groqKeyStatus,
-                    maskedValue: appSettings.maskedKey(for: appSettings.groqAPIKey),
-                    onSave: saveGroqKey,
-                    onCancel: cancelGroqKeyEditing
-                )
+            processingSettingsCard
 
-                ElsonMaskedAPIKeyEditor(
-                    title: "Cerebras",
-                    persistedValue: appSettings.cerebrasAPIKey,
-                    draftValue: $cerebrasDraftKey,
-                    isEditing: $isEditingCerebrasKey,
-                    isSaving: isSavingCerebrasKey,
-                    statusText: cerebrasKeyStatus,
-                    maskedValue: appSettings.maskedKey(for: appSettings.cerebrasAPIKey),
-                    onSave: saveCerebrasKey,
-                    onCancel: cancelCerebrasKeyEditing
-                )
+            if appSettings.runtimeMode == .hosted {
+                ElsonSettingsCard(title: "API Keys") {
+                    ElsonMaskedAPIKeyEditor(
+                        title: "Groq",
+                        persistedValue: appSettings.groqAPIKey,
+                        draftValue: $groqDraftKey,
+                        isEditing: $isEditingGroqKey,
+                        isSaving: isSavingGroqKey,
+                        statusText: groqKeyStatus,
+                        maskedValue: appSettings.maskedKey(for: appSettings.groqAPIKey),
+                        onSave: saveGroqKey,
+                        onCancel: cancelGroqKeyEditing
+                    )
 
-                ElsonMaskedAPIKeyEditor(
-                    title: "Gemini",
-                    persistedValue: appSettings.geminiAPIKey,
-                    draftValue: $geminiDraftKey,
-                    isEditing: $isEditingGeminiKey,
-                    isSaving: isSavingGeminiKey,
-                    statusText: geminiKeyStatus,
-                    maskedValue: appSettings.maskedKey(for: appSettings.geminiAPIKey),
-                    onSave: saveGeminiKey,
-                    onCancel: cancelGeminiKeyEditing
-                )
+                    ElsonMaskedAPIKeyEditor(
+                        title: "Cerebras",
+                        persistedValue: appSettings.cerebrasAPIKey,
+                        draftValue: $cerebrasDraftKey,
+                        isEditing: $isEditingCerebrasKey,
+                        isSaving: isSavingCerebrasKey,
+                        statusText: cerebrasKeyStatus,
+                        maskedValue: appSettings.maskedKey(for: appSettings.cerebrasAPIKey),
+                        onSave: saveCerebrasKey,
+                        onCancel: cancelCerebrasKeyEditing
+                    )
+
+                    ElsonMaskedAPIKeyEditor(
+                        title: "Gemini",
+                        persistedValue: appSettings.geminiAPIKey,
+                        draftValue: $geminiDraftKey,
+                        isEditing: $isEditingGeminiKey,
+                        isSaving: isSavingGeminiKey,
+                        statusText: geminiKeyStatus,
+                        maskedValue: appSettings.maskedKey(for: appSettings.geminiAPIKey),
+                        onSave: saveGeminiKey,
+                        onCancel: cancelGeminiKeyEditing
+                    )
+                }
             }
 
             ElsonSettingsCard(title: "Modes") {
@@ -399,7 +414,7 @@ struct ElsonSettingsView: View {
                         Text("Transcript")
                             .font(.system(size: 13, weight: .semibold))
                         Spacer()
-                        Text("Groq STT + OCR, then Cerebras")
+                        Text(transcriptModePipelineText)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(.secondary)
                     }
@@ -408,7 +423,7 @@ struct ElsonSettingsView: View {
                         Text("Agent")
                             .font(.system(size: 13, weight: .semibold))
                         Spacer()
-                        Text("Groq STT + screenshot to Gemini 3.1 Flash Lite")
+                        Text(agentModePipelineText)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(.secondary)
                     }
@@ -758,6 +773,99 @@ struct ElsonSettingsView: View {
             return "Hold to record. Release to stop."
         case .toggle:
             return "Press once to start. Release. Press again to stop."
+        }
+    }
+
+    private var processingSettingsCard: some View {
+        @Bindable var appSettings = appSettings
+
+        return ElsonSettingsCard(title: "Processing") {
+            Picker("Processing", selection: $appSettings.runtimeMode) {
+                Text("Local").tag(RuntimeMode.local)
+                Text("Cloud").tag(RuntimeMode.hosted)
+            }
+            .pickerStyle(.segmented)
+
+            if appSettings.runtimeMode == .local {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .top, spacing: 10) {
+                        Circle()
+                            .fill(appSettings.localProcessorStatus.isReady ? Color.green : Color.orange)
+                            .frame(width: 10, height: 10)
+                            .padding(.top, 4)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(localProcessorStatusText ?? appSettings.localProcessorStatus.summary)
+                                .font(.system(size: 13, weight: .semibold))
+                            Text(appSettings.localProcessorStatus.detail)
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer(minLength: 12)
+                    }
+
+                    HStack(spacing: 10) {
+                        Label("FluidAudio", systemImage: appSettings.localProcessorStatus.fluidAudioReady ? "checkmark.circle.fill" : "arrow.down.circle")
+                        Label("Gemma 4", systemImage: appSettings.localProcessorStatus.gemmaReady ? "checkmark.circle.fill" : "arrow.down.circle")
+                    }
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+
+                    Button {
+                        prepareLocalProcessorFromSettings()
+                    } label: {
+                        HStack(spacing: 8) {
+                            if isPreparingLocalProcessor {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
+                            Text(isPreparingLocalProcessor ? "Preparing..." : (appSettings.localProcessorStatus.isReady ? "Check Local Processor" : "Download Local Processor"))
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isPreparingLocalProcessor)
+                }
+            } else {
+                Text("Cloud uses Groq, Cerebras, and Gemini.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private var transcriptModePipelineText: String {
+        switch appSettings.runtimeMode {
+        case .local:
+            return "FluidAudio ASR + Gemma 4"
+        case .hosted:
+            return "Groq STT + OCR, then Cerebras"
+        }
+    }
+
+    private var agentModePipelineText: String {
+        switch appSettings.runtimeMode {
+        case .local:
+            return "FluidAudio ASR + Gemma 4 vision"
+        case .hosted:
+            return "Groq STT + screenshot to Gemini"
+        }
+    }
+
+    private func prepareLocalProcessorFromSettings() {
+        guard !isPreparingLocalProcessor else { return }
+        isPreparingLocalProcessor = true
+        localProcessorStatusText = nil
+
+        Task { @MainActor in
+            defer { isPreparingLocalProcessor = false }
+            do {
+                try await appSettings.prepareLocalProcessor()
+                localProcessorStatusText = "Local processor ready."
+            } catch {
+                localProcessorStatusText = error.localizedDescription
+            }
         }
     }
 

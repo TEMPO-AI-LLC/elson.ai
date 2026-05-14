@@ -55,6 +55,7 @@ final class AppSettings {
         static let didCompleteOnboarding = "did_complete_onboarding"
         static let completedOnboardingAppVersion = "completed_onboarding_app_version"
         static let didCompleteInteractionModelOnboarding = "did_complete_interaction_model_onboarding"
+        static let didCompleteProcessingOnboarding = "did_complete_processing_onboarding"
         static let didCompleteFolderOnboarding = "did_complete_folder_onboarding"
         static let didCompleteTranscriptShortcutOnboarding = "did_complete_transcript_shortcut_onboarding"
         static let didCompleteAgentShortcutOnboarding = "did_complete_agent_shortcut_onboarding"
@@ -105,6 +106,15 @@ final class AppSettings {
     var didCompleteInteractionModelOnboarding: Bool = false {
         didSet {
             UserDefaults.standard.set(didCompleteInteractionModelOnboarding, forKey: Keys.didCompleteInteractionModelOnboarding)
+            if !isHydratingMyElsonState {
+                refreshOnboardingStoredFlag()
+            }
+        }
+    }
+
+    var didCompleteProcessingOnboarding: Bool = false {
+        didSet {
+            UserDefaults.standard.set(didCompleteProcessingOnboarding, forKey: Keys.didCompleteProcessingOnboarding)
             if !isHydratingMyElsonState {
                 refreshOnboardingStoredFlag()
             }
@@ -202,6 +212,7 @@ final class AppSettings {
         didSet {
             UserDefaults.standard.set(runtimeMode.rawValue, forKey: Keys.runtimeMode)
             persistLocalConfig()
+            refreshLocalProcessorStatus()
         }
     }
 
@@ -363,6 +374,7 @@ final class AppSettings {
     private(set) var screenRecordingPermissionGranted: Bool = PermissionCoordinator.hasScreenRecordingPermission()
     private(set) var accessibilityPermissionGranted: Bool = PermissionCoordinator.hasAccessibilityPermission()
     private(set) var fullDiskAccessPermissionGranted: Bool = PermissionCoordinator.hasFullDiskAccessPermission()
+    private(set) var localProcessorStatus: LocalProcessorStatus = .current()
     private(set) var lastPromptLearningStatus: String? = nil
     private(set) var lastPromptLearningAt: Date? = nil
     private(set) var discoveredSkills: [RegisteredSkill] = []
@@ -572,14 +584,24 @@ final class AppSettings {
         ElsonLocalConfigStore.shared.hasSelectedWorkspaceFolder()
     }
 
-    var hasRequiredAPIKeys: Bool {
+    var hasRequiredCloudAPIKeys: Bool {
         !sanitizeSecret(groqAPIKey).isEmpty
             && !sanitizeSecret(cerebrasAPIKey).isEmpty
             && !sanitizeSecret(geminiAPIKey).isEmpty
     }
 
+    var hasRequiredAPIKeys: Bool {
+        switch runtimeMode {
+        case .local:
+            return true
+        case .hosted:
+            return hasRequiredCloudAPIKeys
+        }
+    }
+
     var hasCompletedRequiredInstallSetup: Bool {
-        hasRequiredAPIKeys
+        didCompleteProcessingOnboarding
+            && hasRequiredAPIKeys
             && microphonePermissionGranted
             && screenRecordingPermissionGranted
             && accessibilityPermissionGranted
@@ -600,7 +622,7 @@ final class AppSettings {
     var firstIncompleteInstallOnboardingStep: InstallOnboardingStep? {
         let hasCompletedFolderSetup = hasCompletedFolderOnboarding
         if !didCompleteInteractionModelOnboarding { return .interactionModel }
-        if !hasRequiredAPIKeys { return .apiKeys }
+        if !didCompleteProcessingOnboarding || !hasRequiredAPIKeys { return .apiKeys }
         if !microphonePermissionGranted { return .microphone }
         if !screenRecordingPermissionGranted { return .screen }
         if !accessibilityPermissionGranted { return .accessibility }
@@ -923,9 +945,9 @@ final class AppSettings {
             )
         }
 
-        let rawTranscript = try await LocalAIService().transcribe(
+        let rawTranscript = try await LocalProcessingRouter.transcribe(
             audioURL: audioURL,
-            groqAPIKey: config.groqAPIKey,
+            config: config,
             logContext: LocalRequestLogContext(
                 requestId: requestId,
                 threadId: threadId,
@@ -1049,9 +1071,24 @@ final class AppSettings {
         screenRecordingPermissionGranted = PermissionCoordinator.hasScreenRecordingPermission()
         accessibilityPermissionGranted = PermissionCoordinator.hasAccessibilityPermission()
         fullDiskAccessPermissionGranted = PermissionCoordinator.hasFullDiskAccessPermission()
+        refreshLocalProcessorStatus()
 
         if !hasCompletedRequiredInstallSetup, didCompleteOnboarding {
             didCompleteOnboarding = false
+        }
+    }
+
+    func refreshLocalProcessorStatus(errorMessage: String? = nil) {
+        localProcessorStatus = LocalProcessorStatus.current(errorMessage: errorMessage)
+    }
+
+    func prepareLocalProcessor() async throws {
+        localProcessorStatus = LocalProcessorStatus.current(isPreparing: true)
+        do {
+            localProcessorStatus = try await LocalProcessingRouter.prepareLocalProcessor()
+        } catch {
+            localProcessorStatus = LocalProcessorStatus.current(errorMessage: error.localizedDescription)
+            throw error
         }
     }
 
@@ -1266,6 +1303,7 @@ final class AppSettings {
         deferredMyElsonPersistenceTask?.cancel()
         didCompleteOnboarding = false
         didCompleteInteractionModelOnboarding = false
+        didCompleteProcessingOnboarding = false
         didCompleteFolderOnboarding = false
         didCompleteTranscriptShortcutOnboarding = false
         didCompleteAgentShortcutOnboarding = false
@@ -1306,6 +1344,7 @@ final class AppSettings {
         UserDefaults.standard.removeObject(forKey: Keys.didCompleteOnboarding)
         UserDefaults.standard.removeObject(forKey: Keys.completedOnboardingAppVersion)
         UserDefaults.standard.removeObject(forKey: Keys.didCompleteInteractionModelOnboarding)
+        UserDefaults.standard.removeObject(forKey: Keys.didCompleteProcessingOnboarding)
         UserDefaults.standard.removeObject(forKey: Keys.didCompleteFolderOnboarding)
         UserDefaults.standard.removeObject(forKey: Keys.didCompleteTranscriptShortcutOnboarding)
         UserDefaults.standard.removeObject(forKey: Keys.didCompleteAgentShortcutOnboarding)
@@ -1380,6 +1419,7 @@ final class AppSettings {
 
         didCompleteOnboarding = storedDidCompleteOnboarding && completedOnboardingAppVersion == Self.currentAppVersion
         didCompleteInteractionModelOnboarding = UserDefaults.standard.object(forKey: Keys.didCompleteInteractionModelOnboarding) as? Bool ?? false
+        didCompleteProcessingOnboarding = UserDefaults.standard.object(forKey: Keys.didCompleteProcessingOnboarding) as? Bool ?? false
         didCompleteFolderOnboarding = UserDefaults.standard.object(forKey: Keys.didCompleteFolderOnboarding) as? Bool ?? false
         let legacyDidCompleteShortcut = UserDefaults.standard.object(forKey: Keys.didCompleteShortcutOnboarding) as? Bool ?? false
         didCompleteTranscriptShortcutOnboarding = UserDefaults.standard.object(forKey: Keys.didCompleteTranscriptShortcutOnboarding) as? Bool ?? legacyDidCompleteShortcut

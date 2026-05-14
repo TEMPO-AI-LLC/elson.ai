@@ -163,30 +163,30 @@ struct InstallOnboardingView: View {
     }
 
     private var contentCard: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: currentStep == .apiKeys ? 14 : 20) {
             progressDots
 
             if currentStep == .celebration {
                 readyContent
             } else {
                 InstallOnboardingArtView(step: currentStep)
-                    .frame(height: 180)
+                    .frame(height: currentStep == .apiKeys ? 118 : 180)
 
-                VStack(spacing: 8) {
+                VStack(spacing: currentStep == .apiKeys ? 5 : 8) {
                     Text(title(for: currentStep))
-                        .font(.system(size: 34, weight: .semibold))
+                        .font(.system(size: currentStep == .apiKeys ? 29 : 34, weight: .semibold))
                         .foregroundStyle(titleColor)
                         .multilineTextAlignment(.center)
 
                     Text(subtitle(for: currentStep))
-                        .font(.system(size: 15, weight: .medium))
+                        .font(.system(size: currentStep == .apiKeys ? 13 : 15, weight: .medium))
                         .foregroundStyle(secondaryTextColor)
                         .multilineTextAlignment(.center)
                 }
             }
 
             if currentStep == .apiKeys {
-                apiKeysEditor
+                processingEditor
             }
 
             if currentStep == .interactionModel {
@@ -233,9 +233,9 @@ struct InstallOnboardingView: View {
                     .multilineTextAlignment(.center)
             }
         }
-        .padding(28)
+        .padding(currentStep == .apiKeys ? 22 : 28)
         .overlay(alignment: .topTrailing) {
-            if currentStep == .apiKeys {
+            if currentStep == .apiKeys, appSettings.runtimeMode == .hosted {
                 Button {
                     bulkKeyEditorError = nil
                     if !isShowingBulkKeyEditor {
@@ -286,9 +286,76 @@ struct InstallOnboardingView: View {
         }
     }
 
+    private var processingEditor: some View {
+        @Bindable var appSettings = appSettings
+
+        return VStack(spacing: 12) {
+            Picker("Processing", selection: $appSettings.runtimeMode) {
+                Text("Local").tag(RuntimeMode.local)
+                Text("Cloud").tag(RuntimeMode.hosted)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .onChange(of: appSettings.runtimeMode) { _, mode in
+                statusText = nil
+                if mode == .local {
+                    appSettings.refreshLocalProcessorStatus()
+                    isShowingBulkKeyEditor = false
+                } else {
+                    syncAPIKeyDraftsFromSettings()
+                }
+            }
+
+            if appSettings.runtimeMode == .local {
+                localProcessorEditor
+            } else {
+                apiKeysEditor
+            }
+        }
+        .onAppear {
+            appSettings.refreshLocalProcessorStatus()
+        }
+    }
+
+    private var localProcessorEditor: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                Circle()
+                    .fill(appSettings.localProcessorStatus.isReady ? Color.green : Color.orange)
+                    .frame(width: 10, height: 10)
+                    .padding(.top, 5)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(appSettings.localProcessorStatus.summary)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(titleColor)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Text(appSettings.localProcessorStatus.detail)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(tertiaryTextColor)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 8) {
+                Label("FluidAudio v3", systemImage: appSettings.localProcessorStatus.fluidAudioReady ? "checkmark.circle.fill" : "arrow.down.circle")
+                Label("Gemma 4 E4B", systemImage: appSettings.localProcessorStatus.gemmaReady ? "checkmark.circle.fill" : "arrow.down.circle")
+            }
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(secondaryTextColor)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(cardChromeColor)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
     private var apiKeysEditor: some View {
         VStack(spacing: 12) {
-            Text("All 3 keys are required.")
+            Text("Cloud uses 3 keys.")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(secondaryTextColor)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -537,7 +604,7 @@ struct InstallOnboardingView: View {
         case .interactionModel:
             return "Two Modes"
         case .apiKeys:
-            return "API Keys"
+            return "Processing"
         case .microphone:
             return "Microphone"
         case .screen:
@@ -562,7 +629,7 @@ struct InstallOnboardingView: View {
         case .interactionModel:
             return "Choose the right shortcut for the job."
         case .apiKeys:
-            return "Add the 3 keys."
+            return appSettings.runtimeMode == .local ? "Use on-device speech and Gemma." : "Use Groq, Cerebras, and Gemini."
         case .microphone:
             return "Mic so Elson understands you."
         case .screen:
@@ -591,6 +658,9 @@ struct InstallOnboardingView: View {
         case .interactionModel:
             return "Continue"
         case .apiKeys:
+            if appSettings.runtimeMode == .local, !appSettings.localProcessorStatus.isReady {
+                return "Prepare Local Processor"
+            }
             return "Continue"
         case .microphone:
             return "Allow Microphone"
@@ -615,6 +685,9 @@ struct InstallOnboardingView: View {
     private func primaryButtonEnabled(for step: InstallOnboardingStep) -> Bool {
         switch step {
         case .apiKeys:
+            if appSettings.runtimeMode == .local {
+                return !isWorking
+            }
             return !trimmedSecret(groqDraftKey).isEmpty
                 && !trimmedSecret(cerebrasDraftKey).isEmpty
                 && !trimmedSecret(geminiDraftKey).isEmpty
@@ -641,14 +714,19 @@ struct InstallOnboardingView: View {
             Task { @MainActor in
                 defer { isWorking = false }
                 do {
-                    try await appSettings.validateAndSaveAPIKeys(
-                        groq: groqDraftKey,
-                        cerebras: cerebrasDraftKey,
-                        gemini: geminiDraftKey
-                    )
-                    isEditingGroqKey = false
-                    isEditingCerebrasKey = false
-                    isEditingGeminiKey = false
+                    if appSettings.runtimeMode == .local {
+                        try await appSettings.prepareLocalProcessor()
+                    } else {
+                        try await appSettings.validateAndSaveAPIKeys(
+                            groq: groqDraftKey,
+                            cerebras: cerebrasDraftKey,
+                            gemini: geminiDraftKey
+                        )
+                        isEditingGroqKey = false
+                        isEditingCerebrasKey = false
+                        isEditingGeminiKey = false
+                    }
+                    appSettings.didCompleteProcessingOnboarding = true
                     statusText = nil
                     syncAPIKeyDraftsFromSettings()
                     appSettings.refreshOnboardingStoredFlag()

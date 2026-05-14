@@ -956,16 +956,16 @@ final class KeyboardService {
             return "Recording is already active."
         }
         if lowercased.contains("invalid api key") || lowercased.contains("invalid_api_key") {
-            return "Groq API key is invalid. Update it in Settings > API Keys."
+            return "Groq API key is invalid. Update it in Settings > Processing > Cloud."
         }
         if lowercased.contains("missing groq api key") {
-            return "Groq API key is missing. Add it in Settings > API Keys."
+            return "Groq API key is missing. Add it in Settings > Processing > Cloud."
         }
         if lowercased.contains("missing cerebras api key") {
-            return "Cerebras API key is missing. Add it in Settings > API Keys."
+            return "Cerebras API key is missing. Add it in Settings > Processing > Cloud."
         }
         if lowercased.contains("missing gemini api key") {
-            return "Gemini API key is missing. Add it in Settings > API Keys."
+            return "Gemini API key is missing. Add it in Settings > Processing > Cloud."
         }
         if isNoSpeechDetectedMessage(trimmed) || lowercased.contains("no usable transcript") {
             return "No speech detected."

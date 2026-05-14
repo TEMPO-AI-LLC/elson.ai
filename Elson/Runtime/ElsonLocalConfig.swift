@@ -137,6 +137,15 @@ struct RecordingShortcut: Codable, Equatable, Hashable {
 enum RuntimeMode: String, Codable, CaseIterable {
     case local
     case hosted
+
+    var displayName: String {
+        switch self {
+        case .local:
+            return "Local"
+        case .hosted:
+            return "Cloud"
+        }
+    }
 }
 
 struct ElsonLocalConfig: Codable, Equatable {

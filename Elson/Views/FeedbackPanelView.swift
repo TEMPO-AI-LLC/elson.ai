@@ -224,9 +224,10 @@ struct FeedbackPanelView: View {
             defer { try? FileManager.default.removeItem(at: audioURL) }
 
             do {
-                let transcript = try await LocalAIService().transcribe(
+                let config = await MainActor.run { appSettings.makeLocalConfig() }
+                let transcript = try await LocalProcessingRouter.transcribe(
                     audioURL: audioURL,
-                    groqAPIKey: appSettings.makeLocalConfig().groqAPIKey,
+                    config: config,
                     logContext: LocalRequestLogContext(
                         requestId: snapshot.requestId,
                         threadId: snapshot.threadId ?? "feedback",

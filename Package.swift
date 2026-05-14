@@ -44,12 +44,22 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui.git", from: "2.0.0"),
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.12.4"),
+        .package(path: "vendor/gemma-4-swift-mlx"),
+        .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.31.3"),
+        .package(url: "https://github.com/ml-explore/mlx-swift-lm", branch: "main"),
     ],
     targets: [
         .executableTarget(
             name: "Elson",
             dependencies: [
                 .product(name: "MarkdownUI", package: "swift-markdown-ui"),
+                .product(name: "FluidAudio", package: "FluidAudio"),
+                .product(name: "Gemma4Swift", package: "gemma-4-swift-mlx"),
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+                .product(name: "MLXLLM", package: "mlx-swift-lm"),
+                .product(name: "MLXRandom", package: "mlx-swift"),
             ],
             path: "Elson",
             exclude: [
@@ -92,6 +102,7 @@ let package = Package(
                 "Runtime/GroqTranscriptionSanitizer.swift",
                 "Runtime/LocalAIService.swift",
                 "Runtime/LocalDirectTransport.swift",
+                "Runtime/LocalProcessingServices.swift",
                 "Runtime/MyElsonMemory.swift",
                 "Runtime/PostResponseCorrectionCoordinator.swift",
                 "Runtime/RuntimeTransport.swift",

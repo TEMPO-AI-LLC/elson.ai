@@ -2,11 +2,10 @@ import Foundation
 
 struct LocalDirectTransport: RuntimeTransport {
     func send(_ request: ElsonRequestEnvelope, config: ElsonLocalConfig) async throws -> ElsonResponseEnvelope {
-        let formatted = try await LocalAIService().runTranscriptAgent(
+        let formatted = try await LocalProcessingRouter.runTranscriptAgent(
             request: request,
-            provider: .cerebras,
-            cerebrasAPIKey: config.cerebrasAPIKey,
-            geminiAPIKey: config.geminiAPIKey
+            config: config,
+            hostedProvider: .cerebras
         )
 
         return ElsonResponseEnvelope(
