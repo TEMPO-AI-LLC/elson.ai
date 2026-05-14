@@ -802,8 +802,8 @@ enum LocalGemmaPromptBuilder {
     static func transcriptEnhancerPrompt(transcript: String) -> TranscriptEnhancerPrompt {
         let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         return TranscriptEnhancerPrompt(
-            systemPrompt: "Clean up this transcript. Preserve language and meaning. Return only the corrected text.",
-            userPrompt: trimmed,
+            systemPrompt: ElsonPromptCatalog.localGemmaTranscriptEnhancerSystemPrompt(),
+            userPrompt: ElsonPromptCatalog.localGemmaTranscriptEnhancerUserPrompt(transcript: trimmed),
             maxTokens: max(180, min(700, (trimmed.count / 3) + 96))
         )
     }

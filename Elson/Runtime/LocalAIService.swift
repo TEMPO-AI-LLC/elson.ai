@@ -174,8 +174,9 @@ struct LocalAIService: Sendable {
         }
 
         let stage = ModelConfig.shared.localRuntime.google.validation
-        let systemPrompt = "Reply with exactly OK."
-        let userPrompt = "Respond with OK."
+        let validationMessages = ElsonPromptCatalog.apiKeyValidationMessages()
+        let systemPrompt = validationMessages.first { $0["role"] == "system" }?["content"] ?? ""
+        let userPrompt = validationMessages.first { $0["role"] == "user" }?["content"] ?? ""
         let requestBody = makeGeminiGenerateContentBody(
             systemPrompt: systemPrompt,
             history: [],

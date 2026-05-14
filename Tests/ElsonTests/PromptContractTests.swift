@@ -44,6 +44,57 @@ final class PromptContractTests: XCTestCase {
         XCTAssertFalse(combined.contains("draft"))
     }
 
+    func testLocalGemmaEnhancerPromptLoadsFromPromptConfig() {
+        let prompt = LocalGemmaPromptBuilder.transcriptEnhancerPrompt(transcript: "  Hallo Welt  ")
+
+        XCTAssertEqual(
+            prompt.systemPrompt,
+            PromptConfig.shared.string("local_gemma_transcript_enhancer_system_prompt")
+        )
+        XCTAssertEqual(prompt.userPrompt, "Hallo Welt")
+        XCTAssertLessThan(prompt.systemPrompt.count, 100)
+        XCTAssertFalse(prompt.systemPrompt.localizedCaseInsensitiveContains("screen"))
+        XCTAssertFalse(prompt.systemPrompt.localizedCaseInsensitiveContains("image"))
+    }
+
+    func testAPIKeyValidationMessagesLoadFromPromptConfig() {
+        let messages = ElsonPromptCatalog.apiKeyValidationMessages()
+
+        XCTAssertEqual(messages.count, 2)
+        XCTAssertEqual(messages.first?["role"], "system")
+        XCTAssertEqual(messages.first?["content"], "Reply with exactly OK.")
+        XCTAssertEqual(messages.last?["role"], "user")
+        XCTAssertEqual(messages.last?["content"], "Respond with OK.")
+    }
+
+    func testRuntimePromptInstructionsStayOutOfSwiftSources() throws {
+        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        let checkedFiles = [
+            "Elson/Runtime/ElsonPromptCatalog.swift",
+            "Elson/Runtime/LocalProcessingServices.swift",
+            "Elson/Runtime/LocalAIService.swift",
+        ]
+        let forbiddenPhrases = [
+            "Clean up this transcript. Preserve language",
+            "You improve Elson.ai prompts from user feedback.",
+            "You write ultra-short history card titles",
+            "Extract OCR-style text and a concise scene description",
+            "Transcribe the audio first, then clean the transcript faithfully.",
+            "Reply with exactly OK.",
+            "Respond with OK.",
+        ]
+
+        for relativePath in checkedFiles {
+            let contents = try String(
+                contentsOf: root.appendingPathComponent(relativePath),
+                encoding: .utf8
+            )
+            for phrase in forbiddenPhrases {
+                XCTAssertFalse(contents.contains(phrase), "\(relativePath) hardcodes prompt phrase: \(phrase)")
+            }
+        }
+    }
+
     func testPromptLearningPromptIncludesBothPromptSurfacesAndFeedback() {
         let feedbackEntry = FeedbackEntry(
             rating: .bad,

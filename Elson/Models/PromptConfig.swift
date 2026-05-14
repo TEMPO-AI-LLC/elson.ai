@@ -3,14 +3,28 @@ import Foundation
 final class PromptConfig: @unchecked Sendable {
     static let shared = PromptConfig()
 
-    private let prompts: [String: [String]]
+    private let prompts: [String: PromptConfigEntry]
 
     private init() {
         self.prompts = Self.loadPrompts()
     }
 
     func string(_ key: String, replacements: [String: String] = [:]) -> String {
-        let lines = prompts[key] ?? []
+        guard case .lines(let lines) = prompts[key] else { return "" }
+        return Self.render(lines: lines, replacements: replacements)
+    }
+
+    func messages(_ key: String, replacements: [String: String] = [:]) -> [[String: String]] {
+        guard case .messages(let messages) = prompts[key] else { return [] }
+        return messages.map { message in
+            [
+                "role": message.role,
+                "content": Self.render(lines: message.content, replacements: replacements),
+            ]
+        }
+    }
+
+    private static func render(lines: [String], replacements: [String: String]) -> String {
         var value = lines.joined(separator: "\n")
         for (token, replacement) in replacements {
             value = value.replacingOccurrences(of: "{\(token)}", with: replacement)
@@ -18,10 +32,10 @@ final class PromptConfig: @unchecked Sendable {
         return value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func loadPrompts() -> [String: [String]] {
+    private static func loadPrompts() -> [String: PromptConfigEntry] {
         for candidate in promptConfigCandidates() {
             if let data = try? Data(contentsOf: candidate),
-               let decoded = try? JSONDecoder().decode([String: [String]].self, from: data) {
+               let decoded = try? JSONDecoder().decode([String: PromptConfigEntry].self, from: data) {
                 return decoded
             }
         }
@@ -148,4 +162,23 @@ final class PromptConfig: @unchecked Sendable {
 
         return candidates
     }
+}
+
+private enum PromptConfigEntry: Decodable {
+    case lines([String])
+    case messages([PromptConfigMessage])
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let lines = try? container.decode([String].self) {
+            self = .lines(lines)
+            return
+        }
+        self = .messages(try container.decode([PromptConfigMessage].self))
+    }
+}
+
+private struct PromptConfigMessage: Decodable {
+    let role: String
+    let content: [String]
 }

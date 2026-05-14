@@ -56,13 +56,7 @@ enum ElsonPromptCatalog {
     }
 
     private static var screenExtractorBasePrompt: String {
-        """
-        You extract OCR-style text and a concise scene description from current-turn screenshots.
-
-        Use the Words glossary only to disambiguate visible names, brands, products, people, organizations, domains, file names, and UI labels when the image evidence supports that canonical form.
-        Do not invent text that is not visible.
-        Return only the requested JSON fields.
-        """
+        PromptConfig.shared.string("screen_extractor_base_prompt")
     }
 
     static func screenExtractorSystemPrompt(wordsGlossaryMarkdown: String) -> String {
@@ -79,7 +73,7 @@ enum ElsonPromptCatalog {
     }
 
     static func screenExtractorUserPrompt() -> String {
-        "Extract OCR-style text and a concise scene description from these current-turn screenshots."
+        PromptConfig.shared.string("screen_extractor_user_prompt")
     }
 
     static func transcriptAgentSystemPrompt(
@@ -97,35 +91,22 @@ enum ElsonPromptCatalog {
         envelope: ElsonRequestEnvelope,
         attachmentSummary: String
     ) -> String {
-        """
-        surface: \(envelope.surface)
-        input_source: \(envelope.inputSource)
-        transcript_snippet_count: \(envelope.transcriptSnippetCount.map { String($0) } ?? "None")
-
-        transcript_chunk_timing:
-        \(transcriptChunkTimingText(envelope.transcriptChunkTimings))
-
-        continuation_context:
-        \(continuationContextText(envelope.continuationContext))
-
-        words_glossary:
-        \(wordsGlossaryText(from: envelope.myElsonMarkdown))
-
-        clipboard_text:
-        \(nonEmptyOrPlaceholder(envelope.clipboardText))
-
-        screen_text:
-        \(nonEmptyOrPlaceholder(envelope.screenContext.screenText))
-
-        screen_description:
-        \(nonEmptyOrPlaceholder(envelope.screenContext.screenDescription))
-
-        attachments:
-        \(attachmentSummary)
-
-        raw_transcript:
-        \(nonEmptyOrPlaceholder(envelope.rawTranscript ?? envelope.enhancedTranscript))
-        """
+        PromptConfig.shared.string(
+            "transcript_agent_user_prompt",
+            replacements: [
+                "surface": envelope.surface,
+                "input_source": envelope.inputSource,
+                "transcript_snippet_count": envelope.transcriptSnippetCount.map { String($0) } ?? "None",
+                "transcript_chunk_timing": transcriptChunkTimingText(envelope.transcriptChunkTimings),
+                "continuation_context": continuationContextText(envelope.continuationContext),
+                "words_glossary": wordsGlossaryText(from: envelope.myElsonMarkdown),
+                "clipboard_text": nonEmptyOrPlaceholder(envelope.clipboardText),
+                "screen_text": nonEmptyOrPlaceholder(envelope.screenContext.screenText),
+                "screen_description": nonEmptyOrPlaceholder(envelope.screenContext.screenDescription),
+                "attachments": attachmentSummary,
+                "raw_transcript": nonEmptyOrPlaceholder(envelope.rawTranscript ?? envelope.enhancedTranscript),
+            ]
+        )
     }
 
     static func localFormattingSystemPrompt(
@@ -147,24 +128,15 @@ enum ElsonPromptCatalog {
 
         let contextBlock = extraContextMarkdown.trimmingCharacters(in: .whitespacesAndNewlines)
         let wordsGlossary = wordsGlossaryText(from: extraContextMarkdown)
-        let taskInstructions = contextBlock.isEmpty
-            ? """
-            \(modeInstructions)
-            \(transcriptRules)
-
-            Words glossary:
-            \(wordsGlossary)
-            """
-            : """
-            \(modeInstructions)
-            \(transcriptRules)
-
-            Words glossary:
-            \(wordsGlossary)
-
-            Additional Elson.ai context, preferences, and custom words:
-            \(contextBlock)
-            """
+        let taskInstructions = PromptConfig.shared.string(
+            contextBlock.isEmpty ? "local_formatting_system_task" : "local_formatting_system_task_with_context",
+            replacements: [
+                "mode_instructions": modeInstructions,
+                "transcript_rules": transcriptRules,
+                "words_glossary": wordsGlossary,
+                "context_block": contextBlock,
+            ]
+        )
 
         return taskSystemPrompt(
             basePrompt: transcriptAgentPrompt,
@@ -174,33 +146,21 @@ enum ElsonPromptCatalog {
     }
 
     static func localFormattingUserPrompt(request: LocalFormattingRequest) -> String {
-        """
-        surface: \(request.surface)
-        input_source: \(request.inputSource)
-
-        clipboard_text:
-        \(nonEmptyOrPlaceholder(request.clipboardText))
-
-        screen_text:
-        \(nonEmptyOrPlaceholder(request.screenContext.screenText))
-
-        screen_description:
-        \(nonEmptyOrPlaceholder(request.screenContext.screenDescription))
-
-        attachments:
-        \(request.attachmentSummaryText)
-
-        transcript_snippet_count: \(request.transcriptSnippetCount.map { String($0) } ?? "None")
-
-        transcript_chunk_timing:
-        \(transcriptChunkTimingText(request.transcriptChunkTimings))
-
-        raw_transcript:
-        \(nonEmptyOrPlaceholder(request.rawTranscript))
-
-        current_transcript:
-        \(request.enhancedTranscript)
-        """
+        PromptConfig.shared.string(
+            "local_formatting_user_prompt",
+            replacements: [
+                "surface": request.surface,
+                "input_source": request.inputSource,
+                "clipboard_text": nonEmptyOrPlaceholder(request.clipboardText),
+                "screen_text": nonEmptyOrPlaceholder(request.screenContext.screenText),
+                "screen_description": nonEmptyOrPlaceholder(request.screenContext.screenDescription),
+                "attachments": request.attachmentSummaryText,
+                "transcript_snippet_count": request.transcriptSnippetCount.map { String($0) } ?? "None",
+                "transcript_chunk_timing": transcriptChunkTimingText(request.transcriptChunkTimings),
+                "raw_transcript": nonEmptyOrPlaceholder(request.rawTranscript),
+                "current_transcript": request.enhancedTranscript,
+            ]
+        )
     }
 
     static func workingAgentSystemPrompt(
@@ -223,57 +183,10 @@ enum ElsonPromptCatalog {
         envelope: ElsonRequestEnvelope,
         attachmentSummary: String
     ) -> String {
-        """
-        mode_hint: \(envelope.modeHint)
-        surface: \(envelope.surface)
-        input_source: \(envelope.inputSource)
-        transcript_snippet_count: \(envelope.transcriptSnippetCount.map { String($0) } ?? "None")
-
-        transcript_chunk_timing:
-        \(transcriptChunkTimingText(envelope.transcriptChunkTimings))
-
-        local_date_time: \(envelope.systemContext.localDateTime)
-        local_date: \(envelope.systemContext.localDate)
-        local_time: \(envelope.systemContext.localTime)
-        timezone: \(envelope.systemContext.timezone)
-
-        frontmost_app_name: \(nonEmptyOrPlaceholder(envelope.appContext.frontmostAppName))
-        frontmost_app_bundle_id: \(nonEmptyOrPlaceholder(envelope.appContext.frontmostAppBundleId))
-        frontmost_window_title: \(nonEmptyOrPlaceholder(envelope.appContext.frontmostWindowTitle))
-
-        continuation_context:
-        \(continuationContextText(envelope.continuationContext))
-
-        words_glossary:
-        \(wordsGlossaryText(from: envelope.myElsonMarkdown))
-
-        clipboard_text:
-        \(nonEmptyOrPlaceholder(envelope.clipboardText))
-
-        screen_text:
-        \(nonEmptyOrPlaceholder(envelope.screenContext.screenText))
-
-        screen_description:
-        \(nonEmptyOrPlaceholder(envelope.screenContext.screenDescription))
-
-        attachments:
-        \(attachmentSummary)
-
-        skills_enabled:
-        \(envelope.selectedSkill == nil ? "false" : "true")
-
-        selected_skill_context:
-        \(nonEmptyOrPlaceholder(envelope.selectedSkill?.promptContext))
-
-        myelson_markdown:
-        \(nonEmptyOrPlaceholder(envelope.myElsonMarkdown))
-
-        current_transcript:
-        \(envelope.enhancedTranscript)
-
-        raw_transcript:
-        \(nonEmptyOrPlaceholder(envelope.rawTranscript))
-        """
+        PromptConfig.shared.string(
+            "working_agent_user_prompt",
+            replacements: envelopeReplacements(envelope, attachmentSummary: attachmentSummary)
+        )
     }
 
     static func wordsCorrectionSystemPrompt(
@@ -292,128 +205,55 @@ enum ElsonPromptCatalog {
         assistantReplyText: String,
         attachmentSummary: String
     ) -> String {
-        """
-        mode_hint: \(envelope.modeHint)
-        surface: \(envelope.surface)
-        input_source: \(envelope.inputSource)
-
-        transcript_chunk_timing:
-        \(transcriptChunkTimingText(envelope.transcriptChunkTimings))
-
-        words_glossary:
-        \(wordsGlossaryText(from: envelope.myElsonMarkdown))
-
-        screen_text:
-        \(nonEmptyOrPlaceholder(envelope.screenContext.screenText))
-
-        screen_description:
-        \(nonEmptyOrPlaceholder(envelope.screenContext.screenDescription))
-
-        attachments:
-        \(attachmentSummary)
-
-        assistant_reply_text:
-        \(nonEmptyOrPlaceholder(assistantReplyText))
-
-        current_transcript:
-        \(envelope.enhancedTranscript)
-
-        raw_transcript:
-        \(nonEmptyOrPlaceholder(envelope.rawTranscript))
-        """
+        var replacements = envelopeReplacements(envelope, attachmentSummary: attachmentSummary)
+        replacements["assistant_reply_text"] = nonEmptyOrPlaceholder(assistantReplyText)
+        return PromptConfig.shared.string(
+            "words_correction_user_prompt",
+            replacements: replacements
+        )
     }
 
     static func apiKeyValidationMessages() -> [[String: String]] {
-        [
-            [
-                "role": "system",
-                "content": "Reply with exactly OK."
-            ],
-            [
-                "role": "user",
-                "content": "Respond with OK."
-            ]
-        ]
+        PromptConfig.shared.messages("api_key_validation_messages")
     }
 
     static func structuredEnhancementSystemPrompt(context: String) -> String {
-        """
-        You are Elson.ai's faithful transcript cleanup assistant.
-
-        User's context: \(context)
-
-        Instructions:
-        1. Fix grammar, punctuation, and spelling errors.
-        2. Preserve the user's exact intent, tone, and scope.
-        3. Do not add recommendations, structure, or implied detail that the user did not say.
-        4. Apply explicit transformations only if the user clearly asked for them.
-        5. Return valid JSON with an "enhanced_text" field containing the cleaned text.
-        """
+        PromptConfig.shared.string(
+            "structured_enhancement_system_prompt",
+            replacements: ["context": context]
+        )
     }
 
     static func structuredEnhancementUserPrompt(text: String) -> String {
-        "Clean this transcribed text faithfully and return JSON with enhanced_text only: \"\(text)\""
+        PromptConfig.shared.string(
+            "structured_enhancement_user_prompt",
+            replacements: ["text": text]
+        )
     }
 
     static func looseEnhancementUserPrompt(text: String, context: String) -> String {
-        """
-        You are Elson.ai's faithful transcript cleanup assistant.
-
-        User's context: \(context)
-
-        Instructions:
-        1. Fix grammar, punctuation, and spelling errors.
-        2. Preserve the user's exact intent, tone, and scope.
-        3. Do not add recommendations, structure, or implied detail that the user did not say.
-        4. Apply explicit transformations only if the user clearly asked for them.
-        5. Return only the cleaned text, with no additional formatting or explanation.
-
-        Transcribed text to clean: "\(text)"
-        """
+        PromptConfig.shared.string(
+            "loose_enhancement_user_prompt",
+            replacements: [
+                "context": context,
+                "text": text,
+            ]
+        )
     }
 
     static func googleCombinedTranscriptionSystemInstruction() -> String {
-        """
-        You are Elson.ai's transcription and faithful cleanup assistant.
-        """
+        PromptConfig.shared.string("google_combined_transcription_system_instruction")
     }
 
     static func googleCombinedTranscriptionUserPrompt(context: String) -> String {
-        """
-        Transcribe the audio first, then clean the transcript faithfully.
-
-        Context from the user:
-        \(context)
-
-        Output MUST be valid JSON with exactly these keys:
-        - transcript (string)
-        - enhanced_text (string)
-        """
+        PromptConfig.shared.string(
+            "google_combined_transcription_user_prompt",
+            replacements: ["context": context]
+        )
     }
 
     static func promptLearningSystemPrompt() -> String {
-        """
-        You improve Elson.ai prompts from user feedback.
-
-        Goal:
-        - Make transcript cleanup more faithful.
-        - Make working-agent behavior more answer/action-first.
-        - Keep edits minimal and precise.
-
-        Rules:
-        - Return valid JSON only.
-        - Choose exactly one decision:
-          - no_learning
-          - update_transcript_prompt
-          - update_working_agent_prompt
-        - Update only one prompt at a time.
-        - Never rewrite both prompts in one response.
-        - Prefer no_learning unless the feedback clearly reveals a prompt flaw.
-        - Do not broaden capabilities.
-        - Do not make the transcript prompt more creative.
-        - Do not remove explicit transformation support from the transcript prompt.
-        - Keep transcript fallback available in the working-agent prompt, but de-emphasized.
-        """
+        PromptConfig.shared.string("prompt_learning_system_prompt")
     }
 
     static func promptLearningUserPrompt(
@@ -422,50 +262,32 @@ enum ElsonPromptCatalog {
         transcriptPrompt: String,
         workingAgentPrompt: String
     ) -> String {
-        """
-        feedback:
-        rating: \(feedbackEntry.rating.rawValue)
-        note: \(nonEmptyOrPlaceholder(feedbackEntry.note))
-        expected_route_override: \(nonEmptyOrPlaceholder(feedbackEntry.expectedRouteOverride))
-
-        output_context:
-        request_id: \(subject.requestId)
-        thread_id: \(nonEmptyOrPlaceholder(subject.threadId))
-        actual_route: \(subject.actualRoute)
-        reply_mode: \(subject.replyMode)
-        source_surface: \(subject.sourceSurface)
-        routing_source: \(subject.routingSource)
-        forced_route_reason: \(nonEmptyOrPlaceholder(subject.forcedRouteReason))
-        debug_reason: \(subject.debugReason)
-        visible_output_source: \(subject.visibleOutputSource)
-        has_screen_context: \(subject.hasScreenContext ? "true" : "false")
-
-        raw_transcript:
-        \(nonEmptyOrPlaceholder(subject.rawTranscript))
-
-        processed_output:
-        \(subject.processedText)
-
-        current_transcript_prompt:
-        \(transcriptPrompt)
-
-        current_working_agent_prompt:
-        \(workingAgentPrompt)
-        """
+        PromptConfig.shared.string(
+            "prompt_learning_user_prompt",
+            replacements: [
+                "feedback_rating": feedbackEntry.rating.rawValue,
+                "feedback_note": nonEmptyOrPlaceholder(feedbackEntry.note),
+                "expected_route_override": nonEmptyOrPlaceholder(feedbackEntry.expectedRouteOverride),
+                "request_id": subject.requestId,
+                "thread_id": nonEmptyOrPlaceholder(subject.threadId),
+                "actual_route": subject.actualRoute,
+                "reply_mode": subject.replyMode,
+                "source_surface": subject.sourceSurface,
+                "routing_source": subject.routingSource,
+                "forced_route_reason": nonEmptyOrPlaceholder(subject.forcedRouteReason),
+                "debug_reason": subject.debugReason,
+                "visible_output_source": subject.visibleOutputSource,
+                "has_screen_context": subject.hasScreenContext ? "true" : "false",
+                "raw_transcript": nonEmptyOrPlaceholder(subject.rawTranscript),
+                "processed_output": subject.processedText,
+                "current_transcript_prompt": transcriptPrompt,
+                "current_working_agent_prompt": workingAgentPrompt,
+            ]
+        )
     }
 
     static func historySummarySystemPrompt() -> String {
-        """
-        You write ultra-short history card titles for Elson.ai.
-
-        Rules:
-        - Return plain text only.
-        - Prefer exactly two words. One word is acceptable only when a second word would be awkward.
-        - Never exceed two words.
-        - Preserve the user's language.
-        - No quotes, no markdown, no labels, no punctuation unless the word itself requires it.
-        - Focus on the core intent or topic, not the UI source.
-        """
+        PromptConfig.shared.string("history_summary_system_prompt")
     }
 
     static func historySummaryUserPrompt(
@@ -474,21 +296,26 @@ enum ElsonPromptCatalog {
         source: String,
         replyMode: String?
     ) -> String {
-        """
-        Create the shortest useful history title for this entry.
+        PromptConfig.shared.string(
+            "history_summary_user_prompt",
+            replacements: [
+                "source": nonEmptyOrPlaceholder(source),
+                "reply_mode": nonEmptyOrPlaceholder(replyMode),
+                "final_text": nonEmptyOrPlaceholder(text),
+                "raw_transcript": nonEmptyOrPlaceholder(rawTranscript),
+            ]
+        )
+    }
 
-        Source:
-        \(nonEmptyOrPlaceholder(source))
+    static func localGemmaTranscriptEnhancerSystemPrompt() -> String {
+        PromptConfig.shared.string("local_gemma_transcript_enhancer_system_prompt")
+    }
 
-        Reply mode:
-        \(nonEmptyOrPlaceholder(replyMode))
-
-        Final text:
-        \(nonEmptyOrPlaceholder(text))
-
-        Original transcript:
-        \(nonEmptyOrPlaceholder(rawTranscript))
-        """
+    static func localGemmaTranscriptEnhancerUserPrompt(transcript: String) -> String {
+        PromptConfig.shared.string(
+            "local_gemma_transcript_enhancer_user_prompt",
+            replacements: ["transcript": transcript]
+        )
     }
 
     static func cerebrasMessages(
@@ -533,9 +360,7 @@ enum ElsonPromptCatalog {
         let sortedTimings = timings.sorted { $0.index < $1.index }
         guard !sortedTimings.isEmpty else { return "None" }
 
-        var lines = [
-            "Use these timing hints only to detect duplicated wording caused by ASR overlap. Do not mention timing in the output."
-        ]
+        var lines = [PromptConfig.shared.string("transcript_chunk_timing_header")]
         for (position, timing) in sortedTimings.enumerated() {
             let snippet = timing.transcriptSnippetIndex.map { "snippet \($0 + 1)" } ?? "no transcript snippet"
             let overlap = timing.overlapStartSeconds.flatMap { start in
@@ -581,6 +406,37 @@ enum ElsonPromptCatalog {
         return values
     }
 
+    private static func envelopeReplacements(
+        _ envelope: ElsonRequestEnvelope,
+        attachmentSummary: String
+    ) -> [String: String] {
+        [
+            "mode_hint": envelope.modeHint,
+            "surface": envelope.surface,
+            "input_source": envelope.inputSource,
+            "transcript_snippet_count": envelope.transcriptSnippetCount.map { String($0) } ?? "None",
+            "transcript_chunk_timing": transcriptChunkTimingText(envelope.transcriptChunkTimings),
+            "local_date_time": envelope.systemContext.localDateTime,
+            "local_date": envelope.systemContext.localDate,
+            "local_time": envelope.systemContext.localTime,
+            "timezone": envelope.systemContext.timezone,
+            "frontmost_app_name": nonEmptyOrPlaceholder(envelope.appContext.frontmostAppName),
+            "frontmost_app_bundle_id": nonEmptyOrPlaceholder(envelope.appContext.frontmostAppBundleId),
+            "frontmost_window_title": nonEmptyOrPlaceholder(envelope.appContext.frontmostWindowTitle),
+            "continuation_context": continuationContextText(envelope.continuationContext),
+            "words_glossary": wordsGlossaryText(from: envelope.myElsonMarkdown),
+            "clipboard_text": nonEmptyOrPlaceholder(envelope.clipboardText),
+            "screen_text": nonEmptyOrPlaceholder(envelope.screenContext.screenText),
+            "screen_description": nonEmptyOrPlaceholder(envelope.screenContext.screenDescription),
+            "attachments": attachmentSummary,
+            "skills_enabled": envelope.selectedSkill == nil ? "false" : "true",
+            "selected_skill_context": nonEmptyOrPlaceholder(envelope.selectedSkill?.promptContext),
+            "myelson_markdown": nonEmptyOrPlaceholder(envelope.myElsonMarkdown),
+            "current_transcript": envelope.enhancedTranscript,
+            "raw_transcript": nonEmptyOrPlaceholder(envelope.rawTranscript),
+        ]
+    }
+
     private static func nonEmptyOrPlaceholder(_ value: String?) -> String {
         let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? "None" : trimmed
@@ -599,23 +455,26 @@ enum ElsonPromptCatalog {
     private static func continuationContextText(_ context: ElsonContinuationContextPayload?) -> String {
         guard let context else { return "None" }
 
-        return """
-        candidate_thread_id: \(nonEmptyOrPlaceholder(context.candidateThreadId))
-        minutes_since_last_turn: \(nonEmptyOrPlaceholder(context.minutesSinceLastTurn))
-        last_turn_created_at: \(nonEmptyOrPlaceholder(context.lastTurnCreatedAt))
-        last_message_role: \(nonEmptyOrPlaceholder(context.lastMessageRole))
-        last_user_message: \(nonEmptyOrPlaceholder(context.lastUserMessage))
-        last_assistant_message: \(nonEmptyOrPlaceholder(context.lastAssistantMessage))
-        last_reply_mode: \(nonEmptyOrPlaceholder(context.lastReplyMode))
-        current_frontmost_app_name: \(nonEmptyOrPlaceholder(context.currentFrontmostAppName))
-        current_frontmost_app_bundle_id: \(nonEmptyOrPlaceholder(context.currentFrontmostAppBundleId))
-        current_frontmost_window_title: \(nonEmptyOrPlaceholder(context.currentFrontmostWindowTitle))
-        previous_frontmost_app_name: \(nonEmptyOrPlaceholder(context.previousFrontmostAppName))
-        previous_frontmost_app_bundle_id: \(nonEmptyOrPlaceholder(context.previousFrontmostAppBundleId))
-        previous_frontmost_window_title: \(nonEmptyOrPlaceholder(context.previousFrontmostWindowTitle))
-        same_frontmost_app: \(nonEmptyOrPlaceholder(context.sameFrontmostApp))
-        same_frontmost_window_title: \(nonEmptyOrPlaceholder(context.sameFrontmostWindowTitle))
-        last_output_was_auto_pasted: \(nonEmptyOrPlaceholder(context.lastOutputWasAutoPasted))
-        """
+        return PromptConfig.shared.string(
+            "continuation_context_template",
+            replacements: [
+                "candidate_thread_id": nonEmptyOrPlaceholder(context.candidateThreadId),
+                "minutes_since_last_turn": nonEmptyOrPlaceholder(context.minutesSinceLastTurn),
+                "last_turn_created_at": nonEmptyOrPlaceholder(context.lastTurnCreatedAt),
+                "last_message_role": nonEmptyOrPlaceholder(context.lastMessageRole),
+                "last_user_message": nonEmptyOrPlaceholder(context.lastUserMessage),
+                "last_assistant_message": nonEmptyOrPlaceholder(context.lastAssistantMessage),
+                "last_reply_mode": nonEmptyOrPlaceholder(context.lastReplyMode),
+                "current_frontmost_app_name": nonEmptyOrPlaceholder(context.currentFrontmostAppName),
+                "current_frontmost_app_bundle_id": nonEmptyOrPlaceholder(context.currentFrontmostAppBundleId),
+                "current_frontmost_window_title": nonEmptyOrPlaceholder(context.currentFrontmostWindowTitle),
+                "previous_frontmost_app_name": nonEmptyOrPlaceholder(context.previousFrontmostAppName),
+                "previous_frontmost_app_bundle_id": nonEmptyOrPlaceholder(context.previousFrontmostAppBundleId),
+                "previous_frontmost_window_title": nonEmptyOrPlaceholder(context.previousFrontmostWindowTitle),
+                "same_frontmost_app": nonEmptyOrPlaceholder(context.sameFrontmostApp),
+                "same_frontmost_window_title": nonEmptyOrPlaceholder(context.sameFrontmostWindowTitle),
+                "last_output_was_auto_pasted": nonEmptyOrPlaceholder(context.lastOutputWasAutoPasted),
+            ]
+        )
     }
 }

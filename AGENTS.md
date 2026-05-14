@@ -11,3 +11,6 @@
 - Never use raw workspace paths for onboarding or transcript export; keep all workspace file access behind `withSelectedWorkspaceFolderAccess()`.
 - Keep descriptions and helper copy minimal; omit them unless they prevent confusion.
 - Always commit before prompt edits, and every prompt edit must be followed by at least one eval run against the CSV-backed intent cases so routing changes stay comparable.
+- All LLM prompts, system messages, user messages, and provider message templates must live in `Elson/Resources/prompt-config.json`.
+- Swift code may load prompt keys and inject runtime data, but must not add hardcoded LLM prompt instructions in runtime or service code.
+- New Local/Cloud prompt variants must be represented as separate prompt-config keys, not inline strings.
