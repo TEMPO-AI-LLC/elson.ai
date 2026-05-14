@@ -1125,6 +1125,13 @@ final class ElsonRuntime: @unchecked Sendable {
             return .none
         }
 
+        if config.runtimeMode == .local, stage == "transcript_agent" {
+            DebugLog.runtime(
+                "screen_context_stage request_id=\(requestId) thread_id=\(threadId) stage=\(stage) provider=local ocr=skipped_local_multimodal images=\(images.count)"
+            )
+            return .none
+        }
+
         guard config.runtimeMode == .local || provider == .cerebras else {
             DebugLog.runtime(
                 "screen_context_stage request_id=\(requestId) thread_id=\(threadId) stage=\(stage) provider=\(provider.rawValue) ocr=skipped images=\(images.count)"

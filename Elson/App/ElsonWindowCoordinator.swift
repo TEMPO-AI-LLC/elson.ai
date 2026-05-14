@@ -233,6 +233,7 @@ final class ElsonWindowCoordinator {
 
         let onboardingWindow = mainWindow ?? NSApp.keyWindow ?? NSApp.mainWindow
         showBubbleWindow()
+        appSettings.startLocalProcessorWarmupIfNeeded(reason: "onboarding_handoff")
         onboardingWindow?.orderOut(nil)
 
         onboardingCueTask?.cancel()

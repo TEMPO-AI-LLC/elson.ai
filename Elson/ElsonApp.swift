@@ -20,6 +20,7 @@ struct ElsonApp: App {
                     configureApplicationIfNeeded()
                     appSettings.refreshOnboardingStoredFlag()
                     windowCoordinator.syncBubbleVisibility()
+                    appSettings.startLocalProcessorWarmupIfNeeded(reason: "app_launch")
                 }
                 .onChange(of: appSettings.bubbleOnlyWhileRecording) { _, _ in
                     windowCoordinator.syncBubbleVisibility()
@@ -29,10 +30,12 @@ struct ElsonApp: App {
                 }
                 .onChange(of: appSettings.didCompleteOnboarding) { _, _ in
                     windowCoordinator.syncBubbleVisibility()
+                    appSettings.startLocalProcessorWarmupIfNeeded(reason: "onboarding_completed")
                 }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                     appSettings.refreshOnboardingStoredFlag()
                     windowCoordinator.syncBubbleVisibility()
+                    appSettings.startLocalProcessorWarmupIfNeeded(reason: "app_activated")
                 }
         }
         .windowStyle(.hiddenTitleBar)

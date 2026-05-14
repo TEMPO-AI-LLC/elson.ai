@@ -807,10 +807,14 @@ struct ElsonSettingsView: View {
 
                     HStack(spacing: 10) {
                         Label("FluidAudio", systemImage: appSettings.localProcessorStatus.fluidAudioReady ? "checkmark.circle.fill" : "arrow.down.circle")
-                        Label("Gemma 4", systemImage: appSettings.localProcessorStatus.gemmaReady ? "checkmark.circle.fill" : "arrow.down.circle")
+                        Label(LocalProcessorStatus.gemmaModel.displayName, systemImage: appSettings.localProcessorStatus.gemmaReady ? "checkmark.circle.fill" : "arrow.down.circle")
                     }
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
+
+                    if let progress = appSettings.localProcessorStatus.progress {
+                        localProcessorProgressView(progress)
+                    }
 
                     Button {
                         prepareLocalProcessorFromSettings()
@@ -832,6 +836,35 @@ struct ElsonSettingsView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+        }
+    }
+
+    private func localProcessorProgressView(_ progress: LocalProcessorProgress) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule(style: .continuous)
+                        .fill(Color.secondary.opacity(0.18))
+
+                    Capsule(style: .continuous)
+                        .fill(Color.accentColor)
+                        .frame(width: max(8, proxy.size.width * progress.clampedFraction))
+                }
+            }
+            .frame(height: 7)
+
+            HStack(spacing: 8) {
+                Text(progress.detail)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                Spacer(minLength: 8)
+
+                Text(progress.percentageText)
+                    .monospacedDigit()
+            }
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.secondary)
         }
     }
 

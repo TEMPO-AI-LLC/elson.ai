@@ -87,6 +87,8 @@ final class AppSettings {
         static let legacyOpenClawBaseURL = "openclaw_base_url"
         static let runtimeMode = "runtime_mode"
         static let agentProvider = "agent_provider"
+        static let localProcessorModelID = "local_processor_model_id"
+        static let localProcessorWarmupInFlightModelID = "local_processor_warmup_in_flight_model_id"
     }
 
     private static let fixedAgentProvider: LocalModelProvider = .google
@@ -386,12 +388,18 @@ final class AppSettings {
 
     private var indicatorResetTask: Task<Void, Never>?
     private var deferredMyElsonPersistenceTask: Task<Void, Never>?
+    private var localProcessorWarmupTask: Task<Void, Never>?
+    private var didAttemptLocalProcessorWarmupThisLaunch = false
     private var deferImmediateMyElsonPersistence = false
     private var isHydratingMyElsonState = false
     private var didImportWorkingDirectorySourcesThisLaunch = false
 
     private static var currentAppVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "development"
+    }
+
+    private static var localProcessorWarmupSentinelValue: String {
+        "\(LocalProcessorStatus.gemmaModel.rawValue)|\(currentAppVersion)"
     }
 
     var lastTranscription: String {
@@ -599,9 +607,19 @@ final class AppSettings {
         }
     }
 
+    var hasCompletedProcessingSetup: Bool {
+        switch runtimeMode {
+        case .local:
+            return didCompleteProcessingOnboarding
+                && UserDefaults.standard.string(forKey: Keys.localProcessorModelID) == LocalProcessorStatus.gemmaModel.rawValue
+                && LocalProcessorStatus.current().isReady
+        case .hosted:
+            return didCompleteProcessingOnboarding && hasRequiredCloudAPIKeys
+        }
+    }
+
     var hasCompletedRequiredInstallSetup: Bool {
-        didCompleteProcessingOnboarding
-            && hasRequiredAPIKeys
+        hasCompletedProcessingSetup
             && microphonePermissionGranted
             && screenRecordingPermissionGranted
             && accessibilityPermissionGranted
@@ -622,7 +640,7 @@ final class AppSettings {
     var firstIncompleteInstallOnboardingStep: InstallOnboardingStep? {
         let hasCompletedFolderSetup = hasCompletedFolderOnboarding
         if !didCompleteInteractionModelOnboarding { return .interactionModel }
-        if !didCompleteProcessingOnboarding || !hasRequiredAPIKeys { return .apiKeys }
+        if !hasCompletedProcessingSetup { return .apiKeys }
         if !microphonePermissionGranted { return .microphone }
         if !screenRecordingPermissionGranted { return .screen }
         if !accessibilityPermissionGranted { return .accessibility }
@@ -1083,12 +1101,66 @@ final class AppSettings {
     }
 
     func prepareLocalProcessor() async throws {
-        localProcessorStatus = LocalProcessorStatus.current(isPreparing: true)
+        UserDefaults.standard.removeObject(forKey: Keys.localProcessorWarmupInFlightModelID)
+        localProcessorStatus = LocalProcessorStatus.current(
+            isPreparing: true,
+            progress: .fluidAudioStarting()
+        )
         do {
-            localProcessorStatus = try await LocalProcessingRouter.prepareLocalProcessor()
+            localProcessorStatus = try await LocalProcessingRouter.prepareLocalProcessor { [weak self] progress in
+                self?.localProcessorStatus = LocalProcessorStatus.current(
+                    isPreparing: true,
+                    progress: progress
+                )
+            }
+            UserDefaults.standard.set(LocalProcessorStatus.gemmaModel.rawValue, forKey: Keys.localProcessorModelID)
         } catch {
             localProcessorStatus = LocalProcessorStatus.current(errorMessage: error.localizedDescription)
             throw error
+        }
+    }
+
+    func startLocalProcessorWarmupIfNeeded(reason: String) {
+        guard runtimeMode == .local else { return }
+        guard didCompleteOnboarding, !needsInstallOnboarding else { return }
+        guard localProcessorWarmupTask == nil, !didAttemptLocalProcessorWarmupThisLaunch else { return }
+
+        refreshLocalProcessorStatus()
+        guard localProcessorStatus.isReady else { return }
+        if UserDefaults.standard.string(forKey: Keys.localProcessorWarmupInFlightModelID) == Self.localProcessorWarmupSentinelValue {
+            let message = "Local Gemma warmup crashed during the previous launch."
+            localProcessorStatus = LocalProcessorStatus.current(errorMessage: message)
+            DebugLog.runtimeError("local_processor_warmup_skipped reason=\(reason) previous_crash=true model=\(LocalProcessorStatus.gemmaModel.rawValue)")
+            return
+        }
+
+        didAttemptLocalProcessorWarmupThisLaunch = true
+        UserDefaults.standard.set(Self.localProcessorWarmupSentinelValue, forKey: Keys.localProcessorWarmupInFlightModelID)
+        DebugLog.runtime("local_processor_warmup_scheduled reason=\(reason)")
+
+        localProcessorWarmupTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.localProcessorStatus = LocalProcessorStatus.current(
+                isPreparing: true,
+                progress: .fluidAudioStarting()
+            )
+
+            do {
+                self.localProcessorStatus = try await LocalProcessingRouter.warmLocalProcessor { [weak self] progress in
+                    self?.localProcessorStatus = LocalProcessorStatus.current(
+                        isPreparing: true,
+                        progress: progress
+                    )
+                }
+                DebugLog.runtime("local_processor_warmup_completed reason=\(reason)")
+                UserDefaults.standard.removeObject(forKey: Keys.localProcessorWarmupInFlightModelID)
+            } catch {
+                self.localProcessorStatus = LocalProcessorStatus.current(errorMessage: error.localizedDescription)
+                UserDefaults.standard.removeObject(forKey: Keys.localProcessorWarmupInFlightModelID)
+                DebugLog.runtimeError("local_processor_warmup_failed reason=\(reason) error=\(error.localizedDescription)")
+            }
+
+            self.localProcessorWarmupTask = nil
         }
     }
 

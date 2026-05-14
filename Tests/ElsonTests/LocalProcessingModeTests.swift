@@ -23,6 +23,8 @@ final class LocalProcessingModeTests: XCTestCase {
             "completed_onboarding_app_version",
             "did_complete_interaction_model_onboarding",
             "did_complete_processing_onboarding",
+            "local_processor_model_id",
+            "local_processor_warmup_in_flight_model_id",
             "did_complete_folder_onboarding",
             "did_complete_transcript_shortcut_onboarding",
             "did_complete_agent_shortcut_onboarding",
@@ -57,7 +59,7 @@ final class LocalProcessingModeTests: XCTestCase {
         settings.runtimeMode = .local
         settings.didCompleteProcessingOnboarding = true
         XCTAssertTrue(settings.hasRequiredAPIKeys)
-        XCTAssertNotEqual(settings.firstIncompleteInstallOnboardingStep, .apiKeys)
+        XCTAssertEqual(settings.firstIncompleteInstallOnboardingStep, .apiKeys)
 
         settings.runtimeMode = .hosted
         XCTAssertFalse(settings.hasRequiredAPIKeys)
@@ -87,11 +89,13 @@ final class LocalProcessingModeTests: XCTestCase {
         localConfig.runtimeMode = .local
         XCTAssertEqual(LocalProcessingRouter.audioBackend(for: localConfig), .fluidAudio)
         XCTAssertEqual(LocalProcessingRouter.llmBackend(for: localConfig), .gemma4Swift)
+        XCTAssertTrue(LocalProcessingRouter.audioTranscriber(for: localConfig) is FluidAudioTranscriber)
 
         var hostedConfig = ElsonLocalConfig.default
         hostedConfig.runtimeMode = .hosted
         XCTAssertEqual(LocalProcessingRouter.audioBackend(for: hostedConfig), .groq)
         XCTAssertEqual(LocalProcessingRouter.llmBackend(for: hostedConfig), .hostedProviders)
+        XCTAssertTrue(LocalProcessingRouter.audioTranscriber(for: hostedConfig) is LocalAIService)
     }
 
     func testRuntimeModeCodableRoundTrip() throws {

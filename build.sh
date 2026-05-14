@@ -214,6 +214,80 @@ copy_swiftpm_resource_bundles() {
   fi
 }
 
+copy_mlx_metallib() {
+  local variant="$1"
+  local scratch_path="$2"
+  local macos_dir="$3"
+  local src_root="$scratch_path/checkouts/mlx-swift/Source/Cmlx/mlx"
+  local kernel_dir="$src_root/mlx/backend/metal/kernels"
+  local air_dir="$scratch_path/mlx-metallib-air"
+  local min_version=""
+  local kernel=""
+  local target=""
+  local kernels=(
+    arg_reduce
+    conv
+    gemv
+    layer_norm
+    random
+    rms_norm
+    rope
+    scaled_dot_product_attention
+    fence
+    arange
+    binary
+    binary_two
+    copy
+    fft
+    reduce
+    quantized
+    fp_quantized
+    scan
+    softmax
+    logsumexp
+    sort
+    ternary
+    unary
+    steel/conv/kernels/steel_conv
+    steel/conv/kernels/steel_conv_3d
+    steel/conv/kernels/steel_conv_general
+    steel/gemm/kernels/steel_gemm_fused
+    steel/gemm/kernels/steel_gemm_gather
+    steel/gemm/kernels/steel_gemm_masked
+    steel/gemm/kernels/steel_gemm_splitk
+    steel/gemm/kernels/steel_gemm_segmented
+    gemv_masked
+    steel/attn/kernels/steel_attention
+  )
+
+  if [ ! -d "$kernel_dir" ]; then
+    fail "Missing MLX Metal kernels at $kernel_dir"
+  fi
+
+  min_version="$(variant_minimum_system_version "$variant")"
+  log "🧱 Building MLX Metal library (${variant})..."
+  /bin/rm -rf "$air_dir"
+  /bin/mkdir -p "$air_dir"
+
+  for kernel in "${kernels[@]}"; do
+    target="$(basename "$kernel")"
+    xcrun -sdk macosx metal \
+      -std=metal3.2 \
+      -x metal \
+      -Wall \
+      -Wextra \
+      -fno-fast-math \
+      -Wno-c++17-extensions \
+      -Wno-c++20-extensions \
+      "-mmacosx-version-min=${min_version}" \
+      -c "$kernel_dir/$kernel.metal" \
+      -I"$src_root" \
+      -o "$air_dir/$target.air"
+  done
+
+  xcrun -sdk macosx metallib "$air_dir"/*.air -o "$macos_dir/mlx.metallib"
+}
+
 variant_app_path() {
   local variant="$1"
   printf '%s/%s/%s.app\n' "$BUILD_ROOT" "$variant" "$APP_NAME"
@@ -318,6 +392,7 @@ build_variant() {
   prepare_variant_plist "$variant" "$plist_path"
   copy_resources "$resources_dir"
   copy_swiftpm_resource_bundles "$bin_dir" "$resources_dir"
+  copy_mlx_metallib "$variant" "$scratch_path" "$macos_dir"
 
   log "🔏 Code signing app bundle (${variant})..."
   /usr/bin/codesign --force --deep --sign "$CODESIGN_IDENTITY" --identifier "$BUNDLE_ID" "$app_dir"

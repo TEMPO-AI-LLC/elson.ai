@@ -1,4 +1,5 @@
 import AppKit
+import CoreML
 import FluidAudio
 import Foundation
 import Gemma4Swift
@@ -35,13 +36,35 @@ enum LocalProcessorPaths {
     }
 }
 
+struct LocalProcessorProgress: Equatable, Sendable {
+    enum Stage: String, Equatable, Sendable {
+        case fluidAudio
+        case gemmaDownload
+        case gemmaLoad
+    }
+
+    let stage: Stage
+    let fraction: Double
+    let title: String
+    let detail: String
+
+    var clampedFraction: Double {
+        min(1, max(0, fraction))
+    }
+
+    var percentageText: String {
+        "\(Int((clampedFraction * 100).rounded()))%"
+    }
+}
+
 struct LocalProcessorStatus: Equatable, Sendable {
     let fluidAudioReady: Bool
     let gemmaReady: Bool
     let isPreparing: Bool
+    let progress: LocalProcessorProgress?
     let errorMessage: String?
 
-    static let gemmaModel = Gemma4Pipeline.Model.e4b4bit
+    static let gemmaModel = Gemma4Pipeline.Model.e2b4bit
 
     var isReady: Bool {
         fluidAudioReady && gemmaReady && errorMessage == nil
@@ -50,6 +73,9 @@ struct LocalProcessorStatus: Equatable, Sendable {
     var summary: String {
         if let errorMessage, !errorMessage.isEmpty {
             return errorMessage
+        }
+        if let progress {
+            return progress.title
         }
         if isPreparing {
             return "Preparing local processor..."
@@ -68,7 +94,11 @@ struct LocalProcessorStatus: Equatable, Sendable {
         "\(Self.gemmaModel.displayName), ~\(String(format: "%.1f", Self.gemmaModel.estimatedSizeGB)) GB. FluidAudio v3 multilingual auto."
     }
 
-    static func current(isPreparing: Bool = false, errorMessage: String? = nil) -> LocalProcessorStatus {
+    static func current(
+        isPreparing: Bool = false,
+        progress: LocalProcessorProgress? = nil,
+        errorMessage: String? = nil
+    ) -> LocalProcessorStatus {
         LocalProcessorPaths.configureGemmaCache()
         let asrReady = AsrModels.modelsExist(at: AsrModels.defaultCacheDirectory(for: .v3))
         let gemmaReady = Gemma4ModelCache.isDownloaded(gemmaModel)
@@ -76,7 +106,92 @@ struct LocalProcessorStatus: Equatable, Sendable {
             fluidAudioReady: asrReady,
             gemmaReady: gemmaReady,
             isPreparing: isPreparing,
+            progress: progress,
             errorMessage: errorMessage
+        )
+    }
+}
+
+extension LocalProcessorProgress {
+    static func fluidAudioStarting() -> LocalProcessorProgress {
+        LocalProcessorProgress(
+            stage: .fluidAudio,
+            fraction: 0.02,
+            title: "Preparing FluidAudio v3...",
+            detail: "Checking ASR model cache."
+        )
+    }
+
+    static func fluidAudio(_ progress: DownloadUtils.DownloadProgress) -> LocalProcessorProgress {
+        switch progress.phase {
+        case .listing:
+            return LocalProcessorProgress(
+                stage: .fluidAudio,
+                fraction: 0.02,
+                title: "Checking FluidAudio v3...",
+                detail: "Preparing ASR model list."
+            )
+        case .downloading(let completedFiles, let totalFiles):
+            let fraction = max(0.02, min(progress.fractionCompleted * 2, 1))
+            let files = totalFiles > 0 ? "\(completedFiles)/\(totalFiles) files" : "Downloading ASR files"
+            return LocalProcessorProgress(
+                stage: .fluidAudio,
+                fraction: fraction,
+                title: "Downloading FluidAudio v3...",
+                detail: files
+            )
+        case .compiling(let modelName):
+            let fraction = max(0.02, min(progress.fractionCompleted, 1))
+            let model = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+            return LocalProcessorProgress(
+                stage: .fluidAudio,
+                fraction: fraction,
+                title: "Loading FluidAudio v3...",
+                detail: model.isEmpty ? "Finalizing ASR models." : "Compiling \(model)."
+            )
+        }
+    }
+
+    static func gemmaStarting() -> LocalProcessorProgress {
+        let modelName = LocalProcessorStatus.gemmaModel.displayName
+        return LocalProcessorProgress(
+            stage: .gemmaDownload,
+            fraction: 0.02,
+            title: "Preparing \(modelName)...",
+            detail: "Checking local Gemma cache."
+        )
+    }
+
+    static func gemmaDownload(_ progress: Gemma4DownloadProgress) -> LocalProcessorProgress {
+        let modelName = LocalProcessorStatus.gemmaModel.displayName
+        let percent = Int((progress.bytesFraction * 100).rounded())
+        let file = URL(fileURLWithPath: progress.currentFile).lastPathComponent
+        var details = [progress.formattedProgress]
+        if progress.formattedSpeed != "-" {
+            details.append(progress.formattedSpeed)
+        }
+        if let eta = progress.formattedETA {
+            details.append(eta)
+        }
+        if !file.isEmpty {
+            details.append(file)
+        }
+
+        return LocalProcessorProgress(
+            stage: .gemmaDownload,
+            fraction: max(0.02, min(progress.bytesFraction, 1)),
+            title: "Downloading \(modelName) \(percent)%",
+            detail: details.joined(separator: " | ")
+        )
+    }
+
+    static func gemmaLoading() -> LocalProcessorProgress {
+        let modelName = LocalProcessorStatus.gemmaModel.displayName
+        return LocalProcessorProgress(
+            stage: .gemmaLoad,
+            fraction: 0.98,
+            title: "Loading \(modelName)...",
+            detail: "Warming the local model pipeline."
         )
     }
 }
@@ -88,9 +203,17 @@ actor FluidAudioTranscriber: LocalAudioTranscribing {
     private var decoderState = TdtDecoderState.make()
     private var isPrepared = false
 
-    func prepare() async throws {
+    func prepare(progressHandler: DownloadUtils.ProgressHandler? = nil) async throws {
         guard !isPrepared else { return }
-        let models = try await AsrModels.downloadAndLoad(version: .v3)
+        let configuration = MLModelConfiguration()
+        configuration.computeUnits = .cpuAndGPU
+        configuration.allowLowPrecisionAccumulationOnGPU = true
+
+        let models = try await AsrModels.downloadAndLoad(
+            configuration: configuration,
+            version: .v3,
+            progressHandler: progressHandler
+        )
         try await manager.loadModels(models)
         decoderState = TdtDecoderState.make()
         isPrepared = true
@@ -143,6 +266,7 @@ actor FluidAudioTranscriber: LocalAudioTranscribing {
 @MainActor
 final class LocalGemmaService {
     static let shared = LocalGemmaService()
+    private static let multimodalContainerEnabled = true
 
     private var container: ModelContainer?
     private var isPreparing = false
@@ -150,7 +274,8 @@ final class LocalGemmaService {
     private init() {}
 
     func prepare(
-        progress: (@Sendable (Gemma4DownloadProgress) -> Void)? = nil
+        progress: (@Sendable (Gemma4DownloadProgress) -> Void)? = nil,
+        loadStarted: (@Sendable () -> Void)? = nil
     ) async throws {
         if container != nil { return }
         if isPreparing {
@@ -175,7 +300,8 @@ final class LocalGemmaService {
             throw LocalAIServiceError.invalidResponse("Gemma 4 local model cache")
         }
 
-        await Gemma4Registration.register(multimodal: true)
+        loadStarted?()
+        await Gemma4Registration.register(multimodal: Self.multimodalContainerEnabled)
         container = try await loadModelContainer(from: localPath, using: Gemma4TokenizerLoader())
     }
 
@@ -193,23 +319,51 @@ final class LocalGemmaService {
             attachmentSummary: attachmentSummary(from: envelope.attachments)
         )
         let images = imageInputs(from: envelope.attachments)
+        let startedAt = Date()
+        DebugLog.providerEvent(
+            phase: "start",
+            service: "local_gemma_transcript_agent",
+            model: LocalProcessorStatus.gemmaModel.rawValue,
+            metadata: "request_id=\(envelope.requestId) thread_id=\(envelope.threadId) surface=\(envelope.surface) input_source=\(envelope.inputSource) raw_chars=\(fallbackTranscript.count) images=\(images.count)",
+            payloadPreview: ""
+        )
+
         let output: String
-        if images.isEmpty {
-            output = try await generateText(
-                systemPrompt: systemPrompt,
-                userPrompt: userPrompt,
-                temperature: 0.2,
-                maxTokens: 700
+        do {
+            if images.isEmpty || !Self.multimodalContainerEnabled {
+                output = try await generateText(
+                    systemPrompt: systemPrompt,
+                    userPrompt: userPrompt,
+                    temperature: 0.2,
+                    maxTokens: 700
+                )
+            } else {
+                output = try await generateMultimodalText(
+                    systemPrompt: systemPrompt,
+                    userPrompt: userPrompt,
+                    images: images,
+                    temperature: 0.2,
+                    maxTokens: 700
+                )
+            }
+        } catch {
+            DebugLog.providerEvent(
+                phase: "error",
+                service: "local_gemma_transcript_agent",
+                model: LocalProcessorStatus.gemmaModel.rawValue,
+                metadata: "request_id=\(envelope.requestId) thread_id=\(envelope.threadId) surface=\(envelope.surface) input_source=\(envelope.inputSource) duration_ms=\(durationMS(since: startedAt)) images=\(images.count)",
+                payloadPreview: error.localizedDescription
             )
-        } else {
-            output = try await generateMultimodalText(
-                systemPrompt: systemPrompt,
-                userPrompt: userPrompt,
-                images: images,
-                temperature: 0.2,
-                maxTokens: 700
-            )
+            throw error
         }
+
+        DebugLog.providerEvent(
+            phase: "success",
+            service: "local_gemma_transcript_agent",
+            model: LocalProcessorStatus.gemmaModel.rawValue,
+            metadata: "request_id=\(envelope.requestId) thread_id=\(envelope.threadId) surface=\(envelope.surface) input_source=\(envelope.inputSource) duration_ms=\(durationMS(since: startedAt)) output_chars=\(output.count) images=\(images.count)",
+            payloadPreview: output
+        )
 
         return output.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? fallbackTranscript
     }
@@ -225,7 +379,7 @@ final class LocalGemmaService {
         )
         let images = imageInputs(from: envelope.attachments)
         let output: String
-        if images.isEmpty {
+        if images.isEmpty || !Self.multimodalContainerEnabled {
             output = try await generateText(
                 systemPrompt: systemPrompt,
                 userPrompt: userPrompt,
@@ -254,6 +408,10 @@ final class LocalGemmaService {
         logContext: LocalRequestLogContext
     ) async throws -> LocalScreenContext {
         guard !images.isEmpty else { return .none }
+        guard Self.multimodalContainerEnabled else {
+            DebugLog.runtimeError("local_gemma_screen_extraction_skipped reason=multimodal_container_disabled images=\(images.count)")
+            return .none
+        }
 
         let systemPrompt = ElsonPromptCatalog.screenExtractorSystemPrompt(
             wordsGlossaryMarkdown: MyElsonDocument.wordsGlossaryMarkdown(from: myElsonMarkdown)
@@ -361,6 +519,10 @@ final class LocalGemmaService {
             var visibleTokens = 0
             let maxTotalTokens = maxTokens * 3
             for _ in 0 ..< maxTotalTokens {
+                if tokenFilter.isEOS(nextToken) {
+                    break
+                }
+
                 let text = context.tokenizer.decode(tokenIds: [Int(nextToken)])
                 let filtered = tokenFilter.process(tokenId: nextToken, text: text)
                 if !filtered.isEmpty {
@@ -368,7 +530,7 @@ final class LocalGemmaService {
                     visibleTokens += 1
                 }
 
-                if tokenFilter.isEOS(nextToken) || visibleTokens >= maxTokens {
+                if visibleTokens >= maxTokens {
                     break
                 }
 
@@ -386,6 +548,10 @@ final class LocalGemmaService {
         }
 
         return generated.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func durationMS(since startedAt: Date) -> Int {
+        Int(Date().timeIntervalSince(startedAt) * 1000)
     }
 
     private func imagePixelValues(from images: [LocalImageInput]) throws -> MLXArray {
@@ -451,14 +617,79 @@ enum LocalProcessingRouter {
         config.runtimeMode == .local ? .gemma4Swift : .hostedProviders
     }
 
+    static func audioTranscriber(for config: ElsonLocalConfig) -> any LocalAudioTranscribing {
+        switch config.runtimeMode {
+        case .local:
+            return FluidAudioTranscriber.shared
+        case .hosted:
+            return LocalAIService()
+        }
+    }
+
     static func status() -> LocalProcessorStatus {
         LocalProcessorStatus.current()
     }
 
-    static func prepareLocalProcessor() async throws -> LocalProcessorStatus {
-        _ = LocalProcessorStatus.current(isPreparing: true)
-        try await FluidAudioTranscriber.shared.prepare()
-        try await LocalGemmaService.shared.prepare()
+    static func prepareLocalProcessor(
+        progress: (@MainActor @Sendable (LocalProcessorProgress) -> Void)? = nil
+    ) async throws -> LocalProcessorStatus {
+        await progress?(.fluidAudioStarting())
+        let fluidAudioCache = AsrModels.defaultCacheDirectory(for: .v3)
+        if !AsrModels.modelsExist(at: fluidAudioCache) {
+            _ = try await DownloadUtils.downloadRepo(
+                .parakeetV3,
+                to: fluidAudioCache.deletingLastPathComponent(),
+                variant: ParakeetEncoderPrecision.int8.rawValue
+            ) { fluidProgress in
+                Task { @MainActor in
+                    progress?(.fluidAudio(fluidProgress))
+                }
+            }
+        }
+
+        await progress?(.gemmaStarting())
+        LocalProcessorPaths.configureGemmaCache()
+        if !Gemma4ModelCache.isDownloaded(LocalProcessorStatus.gemmaModel) {
+            _ = try await Gemma4ModelDownloader.download(
+                LocalProcessorStatus.gemmaModel,
+                progress: { gemmaProgress in
+                    Task { @MainActor in
+                        progress?(.gemmaDownload(gemmaProgress))
+                    }
+                }
+            )
+        }
+
+        return LocalProcessorStatus.current()
+    }
+
+    static func warmLocalProcessor(
+        progress: (@MainActor @Sendable (LocalProcessorProgress) -> Void)? = nil
+    ) async throws -> LocalProcessorStatus {
+        DebugLog.runtime("local_processor_warmup_stage stage=fluid_audio_load_started")
+        await progress?(.fluidAudioStarting())
+        try await FluidAudioTranscriber.shared.prepare { fluidProgress in
+            Task { @MainActor in
+                progress?(.fluidAudio(fluidProgress))
+            }
+        }
+        DebugLog.runtime("local_processor_warmup_stage stage=fluid_audio_load_completed")
+
+        DebugLog.runtime("local_processor_warmup_stage stage=gemma_load_started")
+        await progress?(.gemmaStarting())
+        try await LocalGemmaService.shared.prepare(
+            progress: { gemmaProgress in
+                Task { @MainActor in
+                    progress?(.gemmaDownload(gemmaProgress))
+                }
+            },
+            loadStarted: {
+                Task { @MainActor in
+                    progress?(.gemmaLoading())
+                }
+            }
+        )
+        DebugLog.runtime("local_processor_warmup_stage stage=gemma_load_completed")
         return LocalProcessorStatus.current()
     }
 

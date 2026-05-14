@@ -342,15 +342,48 @@ struct InstallOnboardingView: View {
 
             HStack(spacing: 8) {
                 Label("FluidAudio v3", systemImage: appSettings.localProcessorStatus.fluidAudioReady ? "checkmark.circle.fill" : "arrow.down.circle")
-                Label("Gemma 4 E4B", systemImage: appSettings.localProcessorStatus.gemmaReady ? "checkmark.circle.fill" : "arrow.down.circle")
+                Label(LocalProcessorStatus.gemmaModel.displayName, systemImage: appSettings.localProcessorStatus.gemmaReady ? "checkmark.circle.fill" : "arrow.down.circle")
             }
             .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(secondaryTextColor)
+
+            if let progress = appSettings.localProcessorStatus.progress {
+                localProcessorProgressView(progress)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .background(cardChromeColor)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func localProcessorProgressView(_ progress: LocalProcessorProgress) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule(style: .continuous)
+                        .fill(tertiaryTextColor.opacity(0.18))
+
+                    Capsule(style: .continuous)
+                        .fill(Color.accentColor)
+                        .frame(width: max(8, proxy.size.width * progress.clampedFraction))
+                }
+            }
+            .frame(height: 6)
+
+            HStack(spacing: 8) {
+                Text(progress.detail)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                Spacer(minLength: 8)
+
+                Text(progress.percentageText)
+                    .monospacedDigit()
+            }
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(tertiaryTextColor)
+        }
     }
 
     private var apiKeysEditor: some View {

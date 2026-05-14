@@ -297,16 +297,19 @@ struct ThreadHistoryMessageRow: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel(transcriptText)
 
-                    if isVoiceExpanded {
+                    if !transcriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
-                            HStack(spacing: 8) {
-                                Spacer(minLength: 0)
-                                CopyFeedbackButton(text: transcriptText)
+                            if isVoiceExpanded {
+                                HStack(spacing: 8) {
+                                    Spacer(minLength: 0)
+                                    CopyFeedbackButton(text: transcriptText)
+                                }
                             }
 
                             Text(transcriptText)
                                 .font(.system(size: 13))
                                 .foregroundStyle(.primary)
+                                .lineLimit(isVoiceExpanded ? nil : 4)
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }

@@ -346,16 +346,18 @@ final class KeyboardService {
             self.activeChunkedSession = nil
             self.shortcutScreenContextPrefetchTask?.cancel()
             self.shortcutScreenContextPrefetchTask = nil
+            let config = appSettings.makeLocalConfig()
             let session = LocalChunkedAudioSession(
                 recordingService: recordingService,
-                groqAPIKey: appSettings.makeLocalConfig().groqAPIKey,
+                groqAPIKey: config.groqAPIKey,
                 modeHint: mode,
                 requestLogContext: LocalRequestLogContext(
                     requestId: requestId,
                     threadId: targetThreadId,
                     surface: "shortcut",
                     inputSource: "audio"
-                )
+                ),
+                transcriber: LocalProcessingRouter.audioTranscriber(for: config)
             )
             guard session.start() else {
                 self.shortcutCaptureInFlight = false
@@ -392,7 +394,8 @@ final class KeyboardService {
             }
             DebugLog.requestMilestone(milestoneSnapshot, name: "recording_started")
 
-            if case .runtime = destination, ScreenSnapshotService.shared.hasPermission() {
+            let shouldPrefetchScreenContext = config.runtimeMode != .local || mode == .agent
+            if case .runtime = destination, shouldPrefetchScreenContext, ScreenSnapshotService.shared.hasPermission() {
                 Task { [weak self] in
                     guard let self else { return }
                     guard let captured = try? await self.captureScreenshotDataIfPossible() else { return }
@@ -629,6 +632,10 @@ final class KeyboardService {
                 if screenshotData.isEmpty, let captured = try? await self.captureScreenshotDataIfPossible() {
                     screenshotData = [captured]
                 }
+                let shouldResolveScreenContext = job.config.runtimeMode != .local || job.runtimeMode == .agent
+                guard shouldResolveScreenContext else {
+                    return (screenshotData, nil)
+                }
                 if let prefetched = await job.screenContextPrefetchTask?.value {
                     return (screenshotData, prefetched)
                 }
@@ -667,17 +674,24 @@ final class KeyboardService {
             }
 
             openJobThreadIfNeeded(chatStore: chatStore, threadId: job.threadId)
+            var rawTranscriptVisibleAt: Date?
             chatStore.append(
                 ChatMessage(
                     id: job.optimisticMessageId,
                     role: .user,
-                    content: "Voice message...",
+                    content: audioDraft.rawTranscript,
                     style: .voiceTranscript,
                     rawTranscript: audioDraft.rawTranscript,
                     captureSessionId: job.session.persistedSessionId
                 )
             )
             chatStore.beginRun(threadId: job.threadId, mode: job.optimisticTarget, optimisticUserMessageId: job.optimisticMessageId)
+            rawTranscriptVisibleAt = Date()
+            DebugLog.requestMilestone(
+                timeline,
+                name: "raw_transcript_visible",
+                metadata: "chars=\(audioDraft.rawTranscript.count)"
+            )
 
             let prefetchedScreenContextResult = try await screenContextTask.value
             let screenshotData = prefetchedScreenContextResult.0
@@ -834,6 +848,10 @@ final class KeyboardService {
                 .addingMetric(
                     "latency_recording_stop_to_visible_ms",
                     valueMS: durationMS(from: audioDraft.recordingStoppedAt, to: visibleOutputCommittedAt)
+                )
+                .addingMetric(
+                    "latency_recording_stop_to_raw_visible_ms",
+                    valueMS: durationMS(from: audioDraft.recordingStoppedAt, to: rawTranscriptVisibleAt)
                 )
                 .addingMetric(
                     "latency_visible_to_clipboard_ms",

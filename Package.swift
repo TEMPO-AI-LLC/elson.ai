@@ -40,7 +40,9 @@ let package = Package(
     name: "Elson",
     platforms: [.macOS(buildVariant.minimumPlatform)],
     products: [
-        .executable(name: "Elson", targets: ["Elson"])
+        .executable(name: "Elson", targets: ["Elson"]),
+        .executable(name: "GemmaTextSmoke", targets: ["GemmaTextSmoke"]),
+        .executable(name: "GemmaImageSmoke", targets: ["GemmaImageSmoke"]),
     ],
     dependencies: [
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui.git", from: "2.0.0"),
@@ -152,6 +154,26 @@ let package = Package(
             name: "ElsonTests",
             dependencies: ["Elson"],
             path: "Tests/ElsonTests"
+        ),
+        .executableTarget(
+            name: "GemmaTextSmoke",
+            dependencies: [
+                .product(name: "Gemma4Swift", package: "gemma-4-swift-mlx"),
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+                .product(name: "MLXLLM", package: "mlx-swift-lm"),
+            ],
+            path: "Tools/GemmaTextSmoke"
+        ),
+        .executableTarget(
+            name: "GemmaImageSmoke",
+            dependencies: [
+                .product(name: "Gemma4Swift", package: "gemma-4-swift-mlx"),
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+                .product(name: "MLXLLM", package: "mlx-swift-lm"),
+            ],
+            path: "Tools/GemmaImageSmoke"
         ),
     ]
 )

@@ -473,16 +473,19 @@ struct ThreadHistoryWindowView: View {
                         }
                     }
 
-                    let screenContextTask = Task {
-                        try await ElsonRuntime.shared.prefetchShortcutScreenContext(
-                            requestId: requestId,
-                            surface: "chat",
-                            threadId: threadId,
-                            config: config,
-                            attachments: pendingAttachments,
-                            screenshotJPEGData: pendingScreenshotJPEGData
-                        )
-                    }
+                    let shouldPrefetchScreenContext = config.runtimeMode != .local || mode == .agent
+                    let screenContextTask: Task<(context: LocalScreenContext, durationMS: Int)?, Error>? = shouldPrefetchScreenContext
+                        ? Task {
+                            try await ElsonRuntime.shared.prefetchShortcutScreenContext(
+                                requestId: requestId,
+                                surface: "chat",
+                                threadId: threadId,
+                                config: config,
+                                attachments: pendingAttachments,
+                                screenshotJPEGData: pendingScreenshotJPEGData
+                            )
+                        }
+                        : nil
                     let groqStartedAt = Date()
                     let audioDraft = try await voiceSession.finalize()
                     timeline = timeline.addingStage(
@@ -495,7 +498,7 @@ struct ThreadHistoryWindowView: View {
                             ChatMessage(
                                 id: optimisticMessageId,
                                 role: .user,
-                                content: placeholder,
+                                content: audioDraft.rawTranscript,
                                 style: .voiceTranscript,
                                 rawTranscript: audioDraft.rawTranscript,
                                 captureSessionId: voiceSession.persistedSessionId
@@ -507,7 +510,7 @@ struct ThreadHistoryWindowView: View {
                             optimisticUserMessageId: optimisticMessageId
                         )
                     }
-                    let prefetchedScreenContext = try await screenContextTask.value
+                    let prefetchedScreenContext = try await screenContextTask?.value
                     if let prefetchedScreenContext {
                         timeline = timeline.addingStage(
                             .screenContext,
@@ -689,11 +692,15 @@ struct ThreadHistoryWindowView: View {
     }
 
     private func voiceTranscriptText(for message: ConversationThreadMessage) -> String {
+        let content = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !content.isEmpty, content != "Voice message...", content != "Voice message" {
+            return content
+        }
         let rawTranscript = message.rawTranscript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !rawTranscript.isEmpty {
             return rawTranscript
         }
-        return message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        return content
     }
 
     private func userFacingSendErrorMessage(_ message: String) -> String {
