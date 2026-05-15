@@ -172,13 +172,7 @@ struct ThreadHistoryMessageRow: View {
     let onToggleVoiceExpansion: () -> Void
     let onOpenAttachment: (ChatMessageAttachment) -> Void
     let onHoverAssistant: (Bool) -> Void
-    let onSubmitFeedback: (ConversationThreadMessage, FeedbackRating, FeedbackRouteOverride, String) -> Void
     let onReplayVoiceMessage: (String) -> Void
-
-    @State private var isFeedbackComposerVisible = false
-    @State private var feedbackRating: FeedbackRating = .good
-    @State private var feedbackRouteOverride: FeedbackRouteOverride = .unchanged
-    @State private var feedbackNote = ""
 
     private var insertedText: String? {
         let trimmed = message.insertedText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -205,19 +199,6 @@ struct ThreadHistoryMessageRow: View {
                 Text(isAssistant ? "Elson.ai" : "You")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
-
-                if isAssistant {
-                    MessageFeedbackButton(
-                        isVisible: assistantHoverVisible || isFeedbackComposerVisible,
-                        isActive: isFeedbackComposerVisible
-                    ) {
-                        if isFeedbackComposerVisible {
-                            resetFeedbackComposer()
-                        } else {
-                            isFeedbackComposerVisible = true
-                        }
-                    }
-                }
 
                 Spacer(minLength: 0)
 
@@ -351,32 +332,6 @@ struct ThreadHistoryMessageRow: View {
             if !isAssistant { Spacer(minLength: 36) }
         }
         .frame(maxWidth: .infinity)
-        .overlay(alignment: isAssistant ? .bottomTrailing : .bottomLeading) {
-            if isAssistant, isFeedbackComposerVisible, message.feedbackSubject?.isUsableForFeedback == true {
-                InlineFeedbackComposer(
-                    rating: $feedbackRating,
-                    routeOverride: $feedbackRouteOverride,
-                    note: $feedbackNote,
-                    onSave: {
-                        onSubmitFeedback(message, feedbackRating, feedbackRouteOverride, feedbackNote)
-                        resetFeedbackComposer()
-                    },
-                    onCancel: {
-                        resetFeedbackComposer()
-                    }
-                )
-                .padding(.top, 12)
-                .padding(.horizontal, 8)
-                .offset(y: 64)
-            }
-        }
-    }
-
-    private func resetFeedbackComposer() {
-        isFeedbackComposerVisible = false
-        feedbackRating = .good
-        feedbackRouteOverride = .unchanged
-        feedbackNote = ""
     }
 }
 
@@ -393,96 +348,5 @@ struct ThreadHistoryInFlightRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .elsonGlassSurface(.control, in: RoundedRectangle(cornerRadius: 16, style: .continuous), interactive: false)
-    }
-}
-
-private struct MessageFeedbackButton: View {
-    let isVisible: Bool
-    let isActive: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: isActive ? "bubble.left.and.exclamationmark.bubble.right.fill" : "bubble.left.and.exclamationmark.bubble.right")
-                .font(.system(size: 8, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 22, height: 22)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .frame(width: 22, height: 22)
-        .opacity(isVisible ? 1 : 0)
-        .allowsHitTesting(isVisible)
-    }
-}
-
-private struct InlineFeedbackComposer: View {
-    @Binding var rating: FeedbackRating
-    @Binding var routeOverride: FeedbackRouteOverride
-    @Binding var note: String
-    let onSave: () -> Void
-    let onCancel: () -> Void
-
-    private var trimmedNote: String {
-        note.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Button("Good") {
-                    rating = .good
-                }
-                .buttonStyle(.bordered)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(rating == .good ? Color.primary.opacity(0.08) : Color.clear)
-                )
-
-                Button("Bad") {
-                    rating = .bad
-                }
-                .buttonStyle(.bordered)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(rating == .bad ? Color.primary.opacity(0.08) : Color.clear)
-                )
-
-                Spacer(minLength: 0)
-            }
-
-            if rating == .bad {
-                Picker("Route", selection: $routeOverride) {
-                    Text("Keep route").tag(FeedbackRouteOverride.unchanged)
-                    Text("Transcript").tag(FeedbackRouteOverride.directTranscript)
-                    Text("Full Agent").tag(FeedbackRouteOverride.fullAgent)
-                }
-                .labelsHidden()
-                .frame(width: 170)
-            }
-
-            TextField("Note", text: $note)
-                .textFieldStyle(.roundedBorder)
-
-            HStack(spacing: 10) {
-                Button("Cancel", action: onCancel)
-                    .buttonStyle(.bordered)
-                Button("Save", action: onSave)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(trimmedNote.isEmpty)
-                Spacer(minLength: 0)
-            }
-        }
-        .padding(12)
-        .frame(width: 280)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color(NSColor.windowBackgroundColor))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.12), radius: 14, y: 8)
     }
 }

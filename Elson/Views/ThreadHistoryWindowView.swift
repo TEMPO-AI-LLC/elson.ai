@@ -137,17 +137,6 @@ struct ThreadHistoryWindowView: View {
             onHoverAssistant: { hovering in
                 hoveredAssistantMessageID = hovering ? message.id : (hoveredAssistantMessageID == message.id ? nil : hoveredAssistantMessageID)
             },
-            onSubmitFeedback: { message, rating, routeOverride, note in
-                guard let subject = message.feedbackSubject else { return }
-                Task { @MainActor in
-                    _ = await appSettings.submitFeedback(
-                        subject: subject,
-                        rating: rating,
-                        note: note,
-                        routeOverride: routeOverride
-                    )
-                }
-            },
             onReplayVoiceMessage: { sessionId in
                 appSettings.reprocessCapturedSession(sessionId: sessionId, chatStore: chatStore, source: "chat_replay")
             }

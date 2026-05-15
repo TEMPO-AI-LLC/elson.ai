@@ -278,6 +278,36 @@ final class LocalProcessingModeTests: XCTestCase {
         XCTAssertTrue(ElsonLocalConfig.default.transcriptScreenOCR)
     }
 
+    func testChatMessageRowsDoNotExposeInlineFeedbackControls() throws {
+        let componentsSource = try repoSource("Elson/Views/ThreadHistoryComponents.swift")
+        let windowSource = try repoSource("Elson/Views/ThreadHistoryWindowView.swift")
+
+        XCTAssertFalse(componentsSource.contains("InlineFeedbackComposer"))
+        XCTAssertFalse(componentsSource.contains("MessageFeedbackButton"))
+        XCTAssertFalse(componentsSource.contains("onSubmitFeedback"))
+        XCTAssertFalse(windowSource.contains("onSubmitFeedback"))
+        XCTAssertTrue(try repoSource("Elson/Views/FeedbackPanelView.swift").contains("submitFeedback"))
+    }
+
+    func testTranscriptWarmupStartsOCRAndGemmaIndependently() throws {
+        let source = try repoSource("Elson/Runtime/LocalProcessingServices.swift")
+
+        XCTAssertTrue(source.contains("async let ocrWarmup"))
+        XCTAssertTrue(source.contains("async let gemmaWarmup"))
+        XCTAssertTrue(source.contains("stage=lighton_ocr_load_failed continued=true"))
+        XCTAssertTrue(source.contains("stage=transcript_llm_load_started"))
+    }
+
+    func testEnhancerLogsSplitPrepareAndGenerationTiming() throws {
+        let source = try repoSource("Elson/Runtime/LocalProcessingServices.swift")
+
+        XCTAssertTrue(source.contains("total_enhancer_ms"))
+        XCTAssertTrue(source.contains("gemma_prepare_wait_ms"))
+        XCTAssertTrue(source.contains("gemma_generation_ms"))
+        XCTAssertTrue(source.contains("ocr_prepare_wait_ms"))
+        XCTAssertTrue(source.contains("ocr_generation_ms"))
+    }
+
     func testRuntimeModeCodableRoundTrip() throws {
         var config = ElsonLocalConfig.default
         config.runtimeMode = .hosted
@@ -385,5 +415,14 @@ final class LocalProcessingModeTests: XCTestCase {
             ),
             selectedSkill: nil
         )
+    }
+
+    private func repoSource(_ relativePath: String) throws -> String {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let url = repoRoot.appendingPathComponent(relativePath)
+        return try String(contentsOf: url, encoding: .utf8)
     }
 }

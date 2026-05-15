@@ -43,13 +43,14 @@ let package = Package(
         .executable(name: "Elson", targets: ["Elson"]),
         .executable(name: "GemmaTextSmoke", targets: ["GemmaTextSmoke"]),
         .executable(name: "GemmaImageSmoke", targets: ["GemmaImageSmoke"]),
+        .executable(name: "LightOnOCRSmoke", targets: ["LightOnOCRSmoke"]),
     ],
     dependencies: [
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui.git", from: "2.0.0"),
         .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.12.4"),
         .package(path: "vendor/gemma-4-swift-mlx"),
         .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.31.3"),
-        .package(url: "https://github.com/ml-explore/mlx-swift-lm", branch: "main"),
+        .package(path: "vendor/mlx-swift-lm"),
     ],
     targets: [
         .executableTarget(
@@ -176,6 +177,16 @@ let package = Package(
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
             ],
             path: "Tools/GemmaImageSmoke"
+        ),
+        .executableTarget(
+            name: "LightOnOCRSmoke",
+            dependencies: [
+                .product(name: "Gemma4Swift", package: "gemma-4-swift-mlx"),
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+                .product(name: "MLXVLM", package: "mlx-swift-lm"),
+            ],
+            path: "Tools/LightOnOCRSmoke"
         ),
     ]
 )

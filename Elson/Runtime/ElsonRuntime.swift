@@ -940,7 +940,7 @@ final class ElsonRuntime: @unchecked Sendable {
             DebugLog.requestMilestone(
                 timeline,
                 name: "final_transcript_accepted",
-                metadata: "source=\(VisibleOutputSource.speculativeTranscriptReuse.rawValue)"
+                metadata: "source=\(VisibleOutputSource.speculativeTranscriptReuse.rawValue) local_output_path=local_transcript_enhancer_reuse"
             )
             response = ElsonResponseEnvelope(
                 replyMode: "transcript",

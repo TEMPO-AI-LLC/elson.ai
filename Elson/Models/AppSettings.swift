@@ -1139,7 +1139,7 @@ final class AppSettings {
                 if mode == .agent {
                     return .gemmaStarting()
                 }
-                return .ocrStarting()
+                return .transcriptLLMStarting()
             }()
             self.localProcessorStatus = LocalProcessorStatus.current(
                 isPreparing: true,
