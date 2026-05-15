@@ -340,8 +340,11 @@ struct InstallOnboardingView: View {
                 Spacer(minLength: 0)
             }
 
-            HStack(spacing: 8) {
-                Label("FluidAudio v3", systemImage: appSettings.localProcessorStatus.fluidAudioReady ? "checkmark.circle.fill" : "arrow.down.circle")
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    Label("FluidAudio v3", systemImage: appSettings.localProcessorStatus.fluidAudioReady ? "checkmark.circle.fill" : "arrow.down.circle")
+                    Label(LocalProcessorStatus.transcriptEnhancerModel.displayName, systemImage: appSettings.localProcessorStatus.transcriptLLMReady ? "checkmark.circle.fill" : "arrow.down.circle")
+                }
                 Label(LocalProcessorStatus.gemmaModel.displayName, systemImage: appSettings.localProcessorStatus.gemmaReady ? "checkmark.circle.fill" : "arrow.down.circle")
             }
             .font(.system(size: 11, weight: .semibold))

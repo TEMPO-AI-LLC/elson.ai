@@ -44,8 +44,8 @@ final class PromptContractTests: XCTestCase {
         XCTAssertFalse(combined.contains("draft"))
     }
 
-    func testLocalGemmaEnhancerPromptLoadsFromPromptConfig() {
-        let prompt = LocalGemmaPromptBuilder.transcriptEnhancerPrompt(transcript: "  Hallo Welt  ")
+    func testLocalEnhancerPromptLoadsFromPromptConfig() {
+        let prompt = LocalTranscriptEnhancerPromptBuilder.transcriptEnhancerPrompt(transcript: "  Hallo Welt  ")
 
         XCTAssertEqual(
             prompt.systemPrompt,

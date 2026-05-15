@@ -88,8 +88,10 @@ final class LocalProcessingModeTests: XCTestCase {
         var localConfig = ElsonLocalConfig.default
         localConfig.runtimeMode = .local
         XCTAssertEqual(LocalProcessingRouter.audioBackend(for: localConfig), .fluidAudio)
-        XCTAssertEqual(LocalProcessingRouter.llmBackend(for: localConfig), .gemma4Swift)
+        XCTAssertEqual(LocalProcessingRouter.llmBackend(for: localConfig), .localModels)
         XCTAssertTrue(LocalProcessingRouter.audioTranscriber(for: localConfig) is FluidAudioTranscriber)
+        XCTAssertEqual(LocalProcessorStatus.transcriptEnhancerModel.id, "prism-ml/Ternary-Bonsai-8B-mlx-2bit")
+        XCTAssertEqual(LocalProcessorStatus.gemmaModel, .e4b4bit)
 
         var hostedConfig = ElsonLocalConfig.default
         hostedConfig.runtimeMode = .hosted
@@ -130,8 +132,8 @@ final class LocalProcessingModeTests: XCTestCase {
         XCTAssertEqual(localRequest.transcriptAgentPrompt, "")
     }
 
-    func testLocalGemmaTranscriptEnhancerPromptIsShortAndTranscriptOnly() {
-        let prompt = LocalGemmaPromptBuilder.transcriptEnhancerPrompt(transcript: "  Hallo Welt  ")
+    func testLocalTranscriptEnhancerPromptIsShortAndTranscriptOnly() {
+        let prompt = LocalTranscriptEnhancerPromptBuilder.transcriptEnhancerPrompt(transcript: "  Hallo Welt  ")
 
         XCTAssertEqual(prompt.userPrompt, "Hallo Welt")
         XCTAssertLessThan(prompt.systemPrompt.count, 100)

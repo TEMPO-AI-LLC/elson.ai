@@ -8,7 +8,7 @@ import MLXLMCommon
 enum GemmaImageSmoke {
     static func main() async throws {
         let startedAt = Date()
-        let model = Gemma4Pipeline.Model.e2b4bit
+        let model = Gemma4Pipeline.Model.e4b4bit
         let imagePath = CommandLine.arguments.dropFirst().first ?? "vendor/gemma-4-swift-mlx/input_sample.jpg"
         let imageURL = URL(fileURLWithPath: imagePath, relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)).standardizedFileURL
         let modelCache = FileManager.default
@@ -16,7 +16,7 @@ enum GemmaImageSmoke {
             .first!
             .appendingPathComponent("Elson", isDirectory: true)
             .appendingPathComponent("LocalProcessor", isDirectory: true)
-            .appendingPathComponent("GemmaModels", isDirectory: true)
+            .appendingPathComponent("LLMModels", isDirectory: true)
         Gemma4ModelCache.customModelsDirectory = modelCache
 
         print("image-smoke model=\(model.rawValue)")

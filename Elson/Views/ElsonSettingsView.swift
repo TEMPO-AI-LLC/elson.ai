@@ -805,8 +805,11 @@ struct ElsonSettingsView: View {
                         Spacer(minLength: 12)
                     }
 
-                    HStack(spacing: 10) {
-                        Label("FluidAudio", systemImage: appSettings.localProcessorStatus.fluidAudioReady ? "checkmark.circle.fill" : "arrow.down.circle")
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 10) {
+                            Label("FluidAudio", systemImage: appSettings.localProcessorStatus.fluidAudioReady ? "checkmark.circle.fill" : "arrow.down.circle")
+                            Label(LocalProcessorStatus.transcriptEnhancerModel.displayName, systemImage: appSettings.localProcessorStatus.transcriptLLMReady ? "checkmark.circle.fill" : "arrow.down.circle")
+                        }
                         Label(LocalProcessorStatus.gemmaModel.displayName, systemImage: appSettings.localProcessorStatus.gemmaReady ? "checkmark.circle.fill" : "arrow.down.circle")
                     }
                     .font(.system(size: 12, weight: .semibold))

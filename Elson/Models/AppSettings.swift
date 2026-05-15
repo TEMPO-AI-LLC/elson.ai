@@ -399,7 +399,7 @@ final class AppSettings {
     }
 
     private static var localProcessorWarmupSentinelValue: String {
-        "\(LocalProcessorStatus.gemmaModel.rawValue)|\(currentAppVersion)"
+        "\(LocalProcessorStatus.activeLLMModelSignature)|\(currentAppVersion)"
     }
 
     var lastTranscription: String {
@@ -611,7 +611,7 @@ final class AppSettings {
         switch runtimeMode {
         case .local:
             return didCompleteProcessingOnboarding
-                && UserDefaults.standard.string(forKey: Keys.localProcessorModelID) == LocalProcessorStatus.gemmaModel.rawValue
+                && UserDefaults.standard.string(forKey: Keys.localProcessorModelID) == LocalProcessorStatus.activeLLMModelSignature
                 && LocalProcessorStatus.current().isReady
         case .hosted:
             return didCompleteProcessingOnboarding && hasRequiredCloudAPIKeys
@@ -1113,7 +1113,7 @@ final class AppSettings {
                     progress: progress
                 )
             }
-            UserDefaults.standard.set(LocalProcessorStatus.gemmaModel.rawValue, forKey: Keys.localProcessorModelID)
+            UserDefaults.standard.set(LocalProcessorStatus.activeLLMModelSignature, forKey: Keys.localProcessorModelID)
         } catch {
             localProcessorStatus = LocalProcessorStatus.current(errorMessage: error.localizedDescription)
             throw error
@@ -1128,9 +1128,9 @@ final class AppSettings {
         refreshLocalProcessorStatus()
         guard localProcessorStatus.isReady else { return }
         if UserDefaults.standard.string(forKey: Keys.localProcessorWarmupInFlightModelID) == Self.localProcessorWarmupSentinelValue {
-            let message = "Local Gemma warmup crashed during the previous launch."
+            let message = "Local processor warmup crashed during the previous launch."
             localProcessorStatus = LocalProcessorStatus.current(errorMessage: message)
-            DebugLog.runtimeError("local_processor_warmup_skipped reason=\(reason) previous_crash=true model=\(LocalProcessorStatus.gemmaModel.rawValue)")
+            DebugLog.runtimeError("local_processor_warmup_skipped reason=\(reason) previous_crash=true models=\(LocalProcessorStatus.activeLLMModelSignature)")
             return
         }
 

@@ -8,33 +8,41 @@ import MLXLMCommon
 enum GemmaTextSmoke {
     static func main() async throws {
         let startedAt = Date()
-        let model = Gemma4Pipeline.Model.e2b4bit
+        let defaultModelID = Gemma4Pipeline.Model.e4b4bit.rawValue
+        let modelID = CommandLine.arguments.dropFirst().first ?? defaultModelID
         let modelCache = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first!
             .appendingPathComponent("Elson", isDirectory: true)
             .appendingPathComponent("LocalProcessor", isDirectory: true)
-            .appendingPathComponent("GemmaModels", isDirectory: true)
+            .appendingPathComponent("LLMModels", isDirectory: true)
         Gemma4ModelCache.customModelsDirectory = modelCache
 
-        print("smoke model=\(model.rawValue)")
+        print("smoke model=\(modelID)")
         print("smoke cache=\(modelCache.path)")
 
-        if !Gemma4ModelCache.isDownloaded(model) {
+        if !Gemma4ModelCache.isDownloaded(modelId: modelID) {
             print("smoke download=missing; downloading")
-            _ = try await Gemma4ModelDownloader.download(model) { progress in
+            _ = try await Gemma4ModelDownloader.download(modelId: modelID) { progress in
                 let percent = Int((progress.bytesFraction * 100).rounded())
                 print("smoke download progress=\(percent)% file=\(progress.currentFile)")
             }
         }
 
-        guard let modelPath = Gemma4ModelCache.localPath(for: model) else {
-            throw SmokeError.missingModel(model.rawValue)
+        let modelPath = modelID.split(separator: "/").reduce(modelCache) { partial, part in
+            partial.appendingPathComponent(String(part), isDirectory: true)
+        }
+        guard FileManager.default.fileExists(atPath: modelPath.appendingPathComponent("config.json").path) else {
+            throw SmokeError.missingModel(modelID)
         }
 
         print("smoke path=\(modelPath.path)")
-        print("smoke register=text-only")
-        await Gemma4Registration.register(multimodal: false)
+        if modelID.contains("gemma-4") {
+            print("smoke register=gemma-text-only")
+            await Gemma4Registration.register(multimodal: false)
+        } else {
+            print("smoke register=mlx-llm-default")
+        }
 
         let loadStartedAt = Date()
         print("smoke load=start")

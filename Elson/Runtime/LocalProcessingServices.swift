@@ -14,7 +14,7 @@ enum LocalProcessingAudioBackend: String, Sendable {
 }
 
 enum LocalProcessingLLMBackend: String, Sendable {
-    case gemma4Swift
+    case localModels
     case hostedProviders
 }
 
@@ -27,18 +27,123 @@ enum LocalProcessorPaths {
             .appendingPathComponent("LocalProcessor", isDirectory: true)
     }
 
-    static var gemmaModelsDirectory: URL {
+    static var modelCacheDirectory: URL {
+        rootDirectory.appendingPathComponent("LLMModels", isDirectory: true)
+    }
+
+    static var legacyGemmaModelsDirectory: URL {
         rootDirectory.appendingPathComponent("GemmaModels", isDirectory: true)
     }
 
-    static func configureGemmaCache() {
-        Gemma4ModelCache.customModelsDirectory = gemmaModelsDirectory
+    static func configureLLMCache() {
+        Gemma4ModelCache.customModelsDirectory = modelCacheDirectory
+    }
+}
+
+struct LocalProcessorLLMModel: Equatable, Sendable {
+    let id: String
+    let displayName: String
+    let estimatedSizeGB: Double
+}
+
+enum LocalProcessorModelCache {
+    static func isDownloaded(_ model: LocalProcessorLLMModel) -> Bool {
+        localPath(for: model.id) != nil
+    }
+
+    static func isDownloaded(_ model: Gemma4Pipeline.Model) -> Bool {
+        localPath(for: model.rawValue) != nil
+    }
+
+    static func localPath(for modelID: String) -> URL? {
+        activeCacheRoots
+            .map { modelDirectory(for: modelID, in: $0) }
+            .first(where: hasModelFiles)
+    }
+
+    @discardableResult
+    static func removeStaleModels() throws -> [String] {
+        let activeIDs = LocalProcessorStatus.activeLLMModelIDs
+        var removed: [String] = []
+        let fileManager = FileManager.default
+
+        for root in cleanupCacheRoots {
+            guard fileManager.fileExists(atPath: root.path) else { continue }
+            let isActiveRoot = root.standardizedFileURL == LocalProcessorPaths.modelCacheDirectory.standardizedFileURL
+            let organizations = (try? fileManager.contentsOfDirectory(
+                at: root,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            )) ?? []
+
+            for organization in organizations where isDirectory(organization) {
+                let models = (try? fileManager.contentsOfDirectory(
+                    at: organization,
+                    includingPropertiesForKeys: [.isDirectoryKey],
+                    options: [.skipsHiddenFiles]
+                )) ?? []
+
+                for modelDirectory in models where isDirectory(modelDirectory) {
+                    let modelID = "\(organization.lastPathComponent)/\(modelDirectory.lastPathComponent)"
+                    guard !(isActiveRoot && activeIDs.contains(modelID)) else { continue }
+                    try fileManager.removeItem(at: modelDirectory)
+                    removed.append(modelID)
+                }
+
+                let remaining = (try? fileManager.contentsOfDirectory(atPath: organization.path)) ?? []
+                if remaining.isEmpty {
+                    try? fileManager.removeItem(at: organization)
+                }
+            }
+        }
+
+        if !removed.isEmpty {
+            DebugLog.runtime("local_processor_removed_stale_models ids=\(removed.joined(separator: ","))")
+        }
+        return removed
+    }
+
+    static func prepareDownloadRoot() throws {
+        LocalProcessorPaths.configureLLMCache()
+        try FileManager.default.createDirectory(
+            at: LocalProcessorPaths.modelCacheDirectory,
+            withIntermediateDirectories: true
+        )
+    }
+
+    private static var activeCacheRoots: [URL] {
+        [LocalProcessorPaths.modelCacheDirectory]
+    }
+
+    private static var cleanupCacheRoots: [URL] {
+        [LocalProcessorPaths.modelCacheDirectory, LocalProcessorPaths.legacyGemmaModelsDirectory]
+    }
+
+    private static func modelDirectory(for modelID: String, in root: URL) -> URL {
+        modelID.split(separator: "/").reduce(root) { partial, part in
+            partial.appendingPathComponent(String(part), isDirectory: true)
+        }
+    }
+
+    private static func hasModelFiles(at path: URL) -> Bool {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: path.appendingPathComponent("config.json").path) else {
+            return false
+        }
+        let contents = (try? fileManager.contentsOfDirectory(atPath: path.path)) ?? []
+        return contents.contains { $0.hasSuffix(".safetensors") }
+    }
+
+    private static func isDirectory(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
     }
 }
 
 struct LocalProcessorProgress: Equatable, Sendable {
     enum Stage: String, Equatable, Sendable {
         case fluidAudio
+        case transcriptLLMDownload
+        case transcriptLLMLoad
         case gemmaDownload
         case gemmaLoad
     }
@@ -59,15 +164,28 @@ struct LocalProcessorProgress: Equatable, Sendable {
 
 struct LocalProcessorStatus: Equatable, Sendable {
     let fluidAudioReady: Bool
+    let transcriptLLMReady: Bool
     let gemmaReady: Bool
     let isPreparing: Bool
     let progress: LocalProcessorProgress?
     let errorMessage: String?
 
-    static let gemmaModel = Gemma4Pipeline.Model.e2b4bit
+    static let transcriptEnhancerModel = LocalProcessorLLMModel(
+        id: "prism-ml/Ternary-Bonsai-8B-mlx-2bit",
+        displayName: "Ternary Bonsai 8B (2-bit)",
+        estimatedSizeGB: 2.3
+    )
+    static let gemmaModel = Gemma4Pipeline.Model.e4b4bit
+    static let activeLLMModelIDs: Set<String> = [
+        transcriptEnhancerModel.id,
+        gemmaModel.rawValue,
+    ]
+    static var activeLLMModelSignature: String {
+        activeLLMModelIDs.sorted().joined(separator: "|")
+    }
 
     var isReady: Bool {
-        fluidAudioReady && gemmaReady && errorMessage == nil
+        fluidAudioReady && transcriptLLMReady && gemmaReady && errorMessage == nil
     }
 
     var summary: String {
@@ -86,12 +204,13 @@ struct LocalProcessorStatus: Equatable, Sendable {
 
         var missing: [String] = []
         if !fluidAudioReady { missing.append("FluidAudio") }
+        if !transcriptLLMReady { missing.append("Bonsai") }
         if !gemmaReady { missing.append("Gemma 4") }
         return missing.isEmpty ? "Local processor not checked." : "Download required: \(missing.joined(separator: ", "))."
     }
 
     var detail: String {
-        "\(Self.gemmaModel.displayName), ~\(String(format: "%.1f", Self.gemmaModel.estimatedSizeGB)) GB. FluidAudio v3 multilingual auto."
+        "FluidAudio v3 auto. Transcript: \(Self.transcriptEnhancerModel.displayName), ~\(String(format: "%.1f", Self.transcriptEnhancerModel.estimatedSizeGB)) GB. Agent: \(Self.gemmaModel.displayName), ~\(String(format: "%.1f", Self.gemmaModel.estimatedSizeGB)) GB."
     }
 
     static func current(
@@ -99,11 +218,13 @@ struct LocalProcessorStatus: Equatable, Sendable {
         progress: LocalProcessorProgress? = nil,
         errorMessage: String? = nil
     ) -> LocalProcessorStatus {
-        LocalProcessorPaths.configureGemmaCache()
+        LocalProcessorPaths.configureLLMCache()
         let asrReady = AsrModels.modelsExist(at: AsrModels.defaultCacheDirectory(for: .v3))
-        let gemmaReady = Gemma4ModelCache.isDownloaded(gemmaModel)
+        let transcriptLLMReady = LocalProcessorModelCache.isDownloaded(transcriptEnhancerModel)
+        let gemmaReady = LocalProcessorModelCache.isDownloaded(gemmaModel)
         return LocalProcessorStatus(
             fluidAudioReady: asrReady,
+            transcriptLLMReady: transcriptLLMReady,
             gemmaReady: gemmaReady,
             isPreparing: isPreparing,
             progress: progress,
@@ -162,8 +283,58 @@ extension LocalProcessorProgress {
         )
     }
 
-    static func gemmaDownload(_ progress: Gemma4DownloadProgress) -> LocalProcessorProgress {
+    static func gemmaLoading() -> LocalProcessorProgress {
         let modelName = LocalProcessorStatus.gemmaModel.displayName
+        return LocalProcessorProgress(
+            stage: .gemmaLoad,
+            fraction: 0.98,
+            title: "Loading \(modelName)...",
+            detail: "Warming the local model pipeline."
+        )
+    }
+
+    static func transcriptLLMStarting() -> LocalProcessorProgress {
+        let modelName = LocalProcessorStatus.transcriptEnhancerModel.displayName
+        return LocalProcessorProgress(
+            stage: .transcriptLLMDownload,
+            fraction: 0.02,
+            title: "Preparing \(modelName)...",
+            detail: "Checking local transcript model cache."
+        )
+    }
+
+    static func transcriptLLMDownload(_ progress: Gemma4DownloadProgress) -> LocalProcessorProgress {
+        let modelName = LocalProcessorStatus.transcriptEnhancerModel.displayName
+        return llmDownloadProgress(
+            progress,
+            modelName: modelName,
+            stage: .transcriptLLMDownload
+        )
+    }
+
+    static func transcriptLLMLoading() -> LocalProcessorProgress {
+        let modelName = LocalProcessorStatus.transcriptEnhancerModel.displayName
+        return LocalProcessorProgress(
+            stage: .transcriptLLMLoad,
+            fraction: 0.98,
+            title: "Loading \(modelName)...",
+            detail: "Warming the transcript enhancer."
+        )
+    }
+
+    static func gemmaDownload(_ progress: Gemma4DownloadProgress) -> LocalProcessorProgress {
+        llmDownloadProgress(
+            progress,
+            modelName: LocalProcessorStatus.gemmaModel.displayName,
+            stage: .gemmaDownload
+        )
+    }
+
+    private static func llmDownloadProgress(
+        _ progress: Gemma4DownloadProgress,
+        modelName: String,
+        stage: Stage
+    ) -> LocalProcessorProgress {
         let percent = Int((progress.bytesFraction * 100).rounded())
         let file = URL(fileURLWithPath: progress.currentFile).lastPathComponent
         var details = [progress.formattedProgress]
@@ -178,20 +349,10 @@ extension LocalProcessorProgress {
         }
 
         return LocalProcessorProgress(
-            stage: .gemmaDownload,
+            stage: stage,
             fraction: max(0.02, min(progress.bytesFraction, 1)),
             title: "Downloading \(modelName) \(percent)%",
             detail: details.joined(separator: " | ")
-        )
-    }
-
-    static func gemmaLoading() -> LocalProcessorProgress {
-        let modelName = LocalProcessorStatus.gemmaModel.displayName
-        return LocalProcessorProgress(
-            stage: .gemmaLoad,
-            fraction: 0.98,
-            title: "Loading \(modelName)...",
-            detail: "Warming the local model pipeline."
         )
     }
 }
@@ -264,6 +425,128 @@ actor FluidAudioTranscriber: LocalAudioTranscribing {
 }
 
 @MainActor
+final class LocalBonsaiTranscriptEnhancerService {
+    static let shared = LocalBonsaiTranscriptEnhancerService()
+    private var container: ModelContainer?
+    private var isPreparing = false
+
+    private init() {}
+
+    func prepare(
+        progress: (@Sendable (Gemma4DownloadProgress) -> Void)? = nil,
+        loadStarted: (@Sendable () -> Void)? = nil
+    ) async throws {
+        if container != nil { return }
+        if isPreparing {
+            while isPreparing {
+                try await Task.sleep(nanoseconds: 250_000_000)
+            }
+            if container != nil { return }
+        }
+
+        isPreparing = true
+        defer { isPreparing = false }
+
+        try LocalProcessorModelCache.removeStaleModels()
+        try LocalProcessorModelCache.prepareDownloadRoot()
+        let model = LocalProcessorStatus.transcriptEnhancerModel
+        if !LocalProcessorModelCache.isDownloaded(model) {
+            _ = try await Gemma4ModelDownloader.download(
+                modelId: model.id,
+                progress: progress
+            )
+        }
+
+        guard let localPath = LocalProcessorModelCache.localPath(for: model.id) else {
+            throw LocalAIServiceError.invalidResponse("Bonsai local model cache")
+        }
+
+        loadStarted?()
+        container = try await loadModelContainer(from: localPath, using: Gemma4TokenizerLoader())
+    }
+
+    func runTranscriptAgent(request envelope: ElsonRequestEnvelope) async throws -> String {
+        try await enhanceTranscript(request: envelope)
+    }
+
+    func enhanceTranscript(request envelope: ElsonRequestEnvelope) async throws -> String {
+        let fallbackTranscript = (envelope.rawTranscript ?? envelope.enhancedTranscript)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !fallbackTranscript.isEmpty else { return "" }
+
+        let prompt = LocalTranscriptEnhancerPromptBuilder.transcriptEnhancerPrompt(transcript: fallbackTranscript)
+        let startedAt = Date()
+        DebugLog.providerEvent(
+            phase: "start",
+            service: "local_bonsai_transcript_agent",
+            model: LocalProcessorStatus.transcriptEnhancerModel.id,
+            metadata: "request_id=\(envelope.requestId) thread_id=\(envelope.threadId) surface=\(envelope.surface) input_source=\(envelope.inputSource) profile=local_text_only raw_chars=\(fallbackTranscript.count)",
+            payloadPreview: ""
+        )
+
+        let output: String
+        do {
+            output = try await generateText(
+                systemPrompt: prompt.systemPrompt,
+                userPrompt: prompt.userPrompt,
+                temperature: 0.0,
+                maxTokens: prompt.maxTokens
+            )
+        } catch {
+            DebugLog.providerEvent(
+                phase: "error",
+                service: "local_bonsai_transcript_agent",
+                model: LocalProcessorStatus.transcriptEnhancerModel.id,
+                metadata: "request_id=\(envelope.requestId) thread_id=\(envelope.threadId) surface=\(envelope.surface) input_source=\(envelope.inputSource) profile=local_text_only duration_ms=\(durationMS(since: startedAt))",
+                payloadPreview: error.localizedDescription
+            )
+            throw error
+        }
+
+        DebugLog.providerEvent(
+            phase: "success",
+            service: "local_bonsai_transcript_agent",
+            model: LocalProcessorStatus.transcriptEnhancerModel.id,
+            metadata: "request_id=\(envelope.requestId) thread_id=\(envelope.threadId) surface=\(envelope.surface) input_source=\(envelope.inputSource) profile=local_text_only duration_ms=\(durationMS(since: startedAt)) output_chars=\(output.count)",
+            payloadPreview: output
+        )
+
+        return stripThinkingBlocks(from: output)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty ?? fallbackTranscript
+    }
+
+    private func generateText(
+        systemPrompt: String,
+        userPrompt: String,
+        temperature: Float,
+        maxTokens: Int
+    ) async throws -> String {
+        try await prepare()
+        guard let container else {
+            throw LocalAIServiceError.invalidResponse("Local Bonsai model")
+        }
+
+        let parameters = GenerateParameters(maxTokens: maxTokens, temperature: temperature, topP: 0.95)
+        let session = ChatSession(container, instructions: systemPrompt, generateParameters: parameters)
+        return try await session.respond(to: userPrompt)
+    }
+
+    private func stripThinkingBlocks(from output: String) -> String {
+        var text = output
+        while let start = text.range(of: "<think>", options: [.caseInsensitive]),
+              let end = text.range(of: "</think>", options: [.caseInsensitive], range: start.upperBound ..< text.endIndex) {
+            text.removeSubrange(start.lowerBound ..< end.upperBound)
+        }
+        return text
+    }
+
+    private func durationMS(since startedAt: Date) -> Int {
+        Int(Date().timeIntervalSince(startedAt) * 1000)
+    }
+}
+
+@MainActor
 final class LocalGemmaService {
     static let shared = LocalGemmaService()
     private static let multimodalContainerEnabled = true
@@ -288,70 +571,22 @@ final class LocalGemmaService {
         isPreparing = true
         defer { isPreparing = false }
 
-        LocalProcessorPaths.configureGemmaCache()
-        if !Gemma4ModelCache.isDownloaded(LocalProcessorStatus.gemmaModel) {
+        try LocalProcessorModelCache.removeStaleModels()
+        try LocalProcessorModelCache.prepareDownloadRoot()
+        if !LocalProcessorModelCache.isDownloaded(LocalProcessorStatus.gemmaModel) {
             _ = try await Gemma4ModelDownloader.download(
                 LocalProcessorStatus.gemmaModel,
                 progress: progress
             )
         }
 
-        guard let localPath = Gemma4ModelCache.localPath(for: LocalProcessorStatus.gemmaModel) else {
+        guard let localPath = LocalProcessorModelCache.localPath(for: LocalProcessorStatus.gemmaModel.rawValue) else {
             throw LocalAIServiceError.invalidResponse("Gemma 4 local model cache")
         }
 
         loadStarted?()
         await Gemma4Registration.register(multimodal: Self.multimodalContainerEnabled)
         container = try await loadModelContainer(from: localPath, using: Gemma4TokenizerLoader())
-    }
-
-    func runTranscriptAgent(request envelope: ElsonRequestEnvelope) async throws -> String {
-        try await enhanceTranscript(request: envelope)
-    }
-
-    func enhanceTranscript(request envelope: ElsonRequestEnvelope) async throws -> String {
-        let fallbackTranscript = (envelope.rawTranscript ?? envelope.enhancedTranscript)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !fallbackTranscript.isEmpty else { return "" }
-
-        let prompt = LocalGemmaPromptBuilder.transcriptEnhancerPrompt(transcript: fallbackTranscript)
-        let startedAt = Date()
-        DebugLog.providerEvent(
-            phase: "start",
-            service: "local_gemma_transcript_agent",
-            model: LocalProcessorStatus.gemmaModel.rawValue,
-            metadata: "request_id=\(envelope.requestId) thread_id=\(envelope.threadId) surface=\(envelope.surface) input_source=\(envelope.inputSource) profile=local_text_only raw_chars=\(fallbackTranscript.count)",
-            payloadPreview: ""
-        )
-
-        let output: String
-        do {
-            output = try await generateText(
-                systemPrompt: prompt.systemPrompt,
-                userPrompt: prompt.userPrompt,
-                temperature: 0.0,
-                maxTokens: prompt.maxTokens
-            )
-        } catch {
-            DebugLog.providerEvent(
-                phase: "error",
-                service: "local_gemma_transcript_agent",
-                model: LocalProcessorStatus.gemmaModel.rawValue,
-                metadata: "request_id=\(envelope.requestId) thread_id=\(envelope.threadId) surface=\(envelope.surface) input_source=\(envelope.inputSource) profile=local_text_only duration_ms=\(durationMS(since: startedAt))",
-                payloadPreview: error.localizedDescription
-            )
-            throw error
-        }
-
-        DebugLog.providerEvent(
-            phase: "success",
-            service: "local_gemma_transcript_agent",
-            model: LocalProcessorStatus.gemmaModel.rawValue,
-            metadata: "request_id=\(envelope.requestId) thread_id=\(envelope.threadId) surface=\(envelope.surface) input_source=\(envelope.inputSource) profile=local_text_only duration_ms=\(durationMS(since: startedAt)) output_chars=\(output.count)",
-            payloadPreview: output
-        )
-
-        return output.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? fallbackTranscript
     }
 
     func runWorkingAgent(request envelope: ElsonRequestEnvelope) async throws -> AgentDecision {
@@ -600,7 +835,7 @@ enum LocalProcessingRouter {
     }
 
     static func llmBackend(for config: ElsonLocalConfig) -> LocalProcessingLLMBackend {
-        config.runtimeMode == .local ? .gemma4Swift : .hostedProviders
+        config.runtimeMode == .local ? .localModels : .hostedProviders
     }
 
     static func audioTranscriber(for config: ElsonLocalConfig) -> any LocalAudioTranscribing {
@@ -632,6 +867,8 @@ enum LocalProcessingRouter {
     static func prepareLocalProcessor(
         progress: (@MainActor @Sendable (LocalProcessorProgress) -> Void)? = nil
     ) async throws -> LocalProcessorStatus {
+        try LocalProcessorModelCache.removeStaleModels()
+
         await progress?(.fluidAudioStarting())
         let fluidAudioCache = AsrModels.defaultCacheDirectory(for: .v3)
         if !AsrModels.modelsExist(at: fluidAudioCache) {
@@ -646,9 +883,22 @@ enum LocalProcessingRouter {
             }
         }
 
+        await progress?(.transcriptLLMStarting())
+        try LocalProcessorModelCache.prepareDownloadRoot()
+        if !LocalProcessorModelCache.isDownloaded(LocalProcessorStatus.transcriptEnhancerModel) {
+            _ = try await Gemma4ModelDownloader.download(
+                modelId: LocalProcessorStatus.transcriptEnhancerModel.id,
+                progress: { modelProgress in
+                    Task { @MainActor in
+                        progress?(.transcriptLLMDownload(modelProgress))
+                    }
+                }
+            )
+        }
+
         await progress?(.gemmaStarting())
-        LocalProcessorPaths.configureGemmaCache()
-        if !Gemma4ModelCache.isDownloaded(LocalProcessorStatus.gemmaModel) {
+        try LocalProcessorModelCache.prepareDownloadRoot()
+        if !LocalProcessorModelCache.isDownloaded(LocalProcessorStatus.gemmaModel) {
             _ = try await Gemma4ModelDownloader.download(
                 LocalProcessorStatus.gemmaModel,
                 progress: { gemmaProgress in
@@ -673,6 +923,22 @@ enum LocalProcessingRouter {
             }
         }
         DebugLog.runtime("local_processor_warmup_stage stage=fluid_audio_load_completed")
+
+        DebugLog.runtime("local_processor_warmup_stage stage=transcript_llm_load_started")
+        await progress?(.transcriptLLMStarting())
+        try await LocalBonsaiTranscriptEnhancerService.shared.prepare(
+            progress: { modelProgress in
+                Task { @MainActor in
+                    progress?(.transcriptLLMDownload(modelProgress))
+                }
+            },
+            loadStarted: {
+                Task { @MainActor in
+                    progress?(.transcriptLLMLoading())
+                }
+            }
+        )
+        DebugLog.runtime("local_processor_warmup_stage stage=transcript_llm_load_completed")
 
         DebugLog.runtime("local_processor_warmup_stage stage=gemma_load_started")
         await progress?(.gemmaStarting())
@@ -737,7 +1003,7 @@ enum LocalProcessingRouter {
     ) async throws -> String {
         switch config.runtimeMode {
         case .local:
-            return try await LocalGemmaService.shared.runTranscriptAgent(
+            return try await LocalBonsaiTranscriptEnhancerService.shared.runTranscriptAgent(
                 request: localTranscriptEnhancerRequest(from: request)
             )
         case .hosted:
@@ -792,7 +1058,7 @@ enum LocalProcessingRouter {
     }
 }
 
-enum LocalGemmaPromptBuilder {
+enum LocalTranscriptEnhancerPromptBuilder {
     struct TranscriptEnhancerPrompt: Equatable, Sendable {
         let systemPrompt: String
         let userPrompt: String
