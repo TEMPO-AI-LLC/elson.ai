@@ -51,11 +51,18 @@ final class PromptContractTests: XCTestCase {
             prompt.systemPrompt,
             PromptConfig.shared.string("local_gemma_transcript_enhancer_system_prompt")
         )
-        XCTAssertEqual(prompt.userPrompt, "Hallo Welt")
+        XCTAssertTrue(prompt.userPrompt.contains("raw_transcript:"))
+        XCTAssertTrue(prompt.userPrompt.contains("Hallo Welt"))
+        XCTAssertTrue(prompt.userPrompt.contains("transcript_snippet_count: None"))
+        XCTAssertTrue(prompt.userPrompt.contains("transcript_chunk_timing:"))
+        XCTAssertTrue(prompt.userPrompt.contains("words_glossary:"))
+        XCTAssertTrue(prompt.userPrompt.contains("screen_text:"))
         XCTAssertTrue(prompt.systemPrompt.localizedCaseInsensitiveContains("screen_text"))
-        XCTAssertFalse(prompt.userPrompt.localizedCaseInsensitiveContains("screen"))
-        XCTAssertLessThanOrEqual(prompt.maxTokens, 320)
-        XCTAssertGreaterThanOrEqual(prompt.maxTokens, 80)
+        XCTAssertFalse(prompt.userPrompt.contains("screen_description"))
+        XCTAssertFalse(prompt.userPrompt.contains("clipboard_text"))
+        XCTAssertFalse(prompt.userPrompt.contains("myelson_markdown"))
+        XCTAssertLessThanOrEqual(prompt.maxTokens, 900)
+        XCTAssertGreaterThanOrEqual(prompt.maxTokens, 160)
     }
 
     func testAPIKeyValidationMessagesLoadFromPromptConfig() {

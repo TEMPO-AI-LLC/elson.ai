@@ -189,6 +189,16 @@ enum ElsonPromptCatalog {
         )
     }
 
+    static func localWorkingAgentUserPrompt(
+        envelope: ElsonRequestEnvelope,
+        attachmentSummary: String
+    ) -> String {
+        PromptConfig.shared.string(
+            "local_working_agent_user_prompt",
+            replacements: localWorkingAgentReplacements(envelope, attachmentSummary: attachmentSummary)
+        )
+    }
+
     static func wordsCorrectionSystemPrompt(
         workingAgentPrompt: String,
         includeConversationHistory: Bool
@@ -312,9 +322,40 @@ enum ElsonPromptCatalog {
     }
 
     static func localGemmaTranscriptEnhancerUserPrompt(transcript: String) -> String {
+        localGemmaTranscriptEnhancerUserPrompt(
+            transcript: transcript,
+            screenContext: ElsonScreenContextPayload(
+                hasScreenContext: false,
+                screenText: nil,
+                screenDescription: nil
+            )
+        )
+    }
+
+    static func localGemmaTranscriptEnhancerUserPrompt(
+        transcript: String,
+        screenContext: ElsonScreenContextPayload
+    ) -> String {
         PromptConfig.shared.string(
             "local_gemma_transcript_enhancer_user_prompt",
-            replacements: ["transcript": transcript]
+            replacements: [
+                "raw_transcript": transcript,
+                "transcript_snippet_count": "None",
+                "transcript_chunk_timing": "None",
+                "local_date_time": "None",
+                "local_date": "None",
+                "local_time": "None",
+                "timezone": "None",
+                "words_glossary": "None",
+                "screen_text": nonEmptyOrPlaceholder(screenContext.screenText),
+            ]
+        )
+    }
+
+    static func localGemmaTranscriptEnhancerUserPrompt(envelope: ElsonRequestEnvelope) -> String {
+        PromptConfig.shared.string(
+            "local_gemma_transcript_enhancer_user_prompt",
+            replacements: localTranscriptEnhancerReplacements(envelope)
         )
     }
 
@@ -438,6 +479,45 @@ enum ElsonPromptCatalog {
             "myelson_markdown": nonEmptyOrPlaceholder(envelope.myElsonMarkdown),
             "current_transcript": envelope.enhancedTranscript,
             "raw_transcript": nonEmptyOrPlaceholder(envelope.rawTranscript),
+        ]
+    }
+
+    private static func localTranscriptEnhancerReplacements(_ envelope: ElsonRequestEnvelope) -> [String: String] {
+        [
+            "raw_transcript": nonEmptyOrPlaceholder(envelope.rawTranscript ?? envelope.enhancedTranscript),
+            "transcript_snippet_count": envelope.transcriptSnippetCount.map { String($0) } ?? "None",
+            "transcript_chunk_timing": transcriptChunkTimingText(envelope.transcriptChunkTimings),
+            "local_date_time": envelope.systemContext.localDateTime,
+            "local_date": envelope.systemContext.localDate,
+            "local_time": envelope.systemContext.localTime,
+            "timezone": envelope.systemContext.timezone,
+            "words_glossary": wordsGlossaryText(from: envelope.myElsonMarkdown),
+            "screen_text": nonEmptyOrPlaceholder(envelope.screenContext.screenText),
+        ]
+    }
+
+    private static func localWorkingAgentReplacements(
+        _ envelope: ElsonRequestEnvelope,
+        attachmentSummary: String
+    ) -> [String: String] {
+        [
+            "raw_transcript": nonEmptyOrPlaceholder(envelope.rawTranscript),
+            "transcript_snippet_count": envelope.transcriptSnippetCount.map { String($0) } ?? "None",
+            "transcript_chunk_timing": transcriptChunkTimingText(envelope.transcriptChunkTimings),
+            "local_date_time": envelope.systemContext.localDateTime,
+            "local_date": envelope.systemContext.localDate,
+            "local_time": envelope.systemContext.localTime,
+            "timezone": envelope.systemContext.timezone,
+            "frontmost_app_name": nonEmptyOrPlaceholder(envelope.appContext.frontmostAppName),
+            "frontmost_app_bundle_id": nonEmptyOrPlaceholder(envelope.appContext.frontmostAppBundleId),
+            "frontmost_window_title": nonEmptyOrPlaceholder(envelope.appContext.frontmostWindowTitle),
+            "continuation_context": continuationContextText(envelope.continuationContext),
+            "words_glossary": wordsGlossaryText(from: envelope.myElsonMarkdown),
+            "clipboard_text": nonEmptyOrPlaceholder(envelope.clipboardText),
+            "attachments": attachmentSummary,
+            "skills_enabled": envelope.selectedSkill == nil ? "false" : "true",
+            "selected_skill_context": nonEmptyOrPlaceholder(envelope.selectedSkill?.promptContext),
+            "myelson_markdown": nonEmptyOrPlaceholder(envelope.myElsonMarkdown),
         ]
     }
 

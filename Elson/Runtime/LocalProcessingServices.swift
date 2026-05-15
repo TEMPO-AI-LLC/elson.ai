@@ -195,6 +195,12 @@ struct LocalProcessorStatus: Equatable, Sendable {
         gemmaModel.rawValue,
         ocrModel.id,
     ]
+    static var sharedGemmaDisplayName: String {
+        "\(gemmaModel.displayName) (Transcript + Agent)"
+    }
+    static var ocrScreenTextDisplayName: String {
+        "\(ocrModel.displayName) (screen text)"
+    }
     static var activeLLMModelSignature: String {
         activeLLMModelIDs.sorted().joined(separator: "|")
     }
@@ -226,7 +232,7 @@ struct LocalProcessorStatus: Equatable, Sendable {
 
     var detail: String {
         let totalModelSizeGB = Double(Self.gemmaModel.estimatedSizeGB) + Self.ocrModel.estimatedSizeGB
-        return "FluidAudio v3 auto. Transcript: OCR with \(Self.ocrModel.displayName) + \(Self.gemmaModel.displayName). Agent: \(Self.gemmaModel.displayName). Total ~\(String(format: "%.1f", totalModelSizeGB)) GB."
+        return "FluidAudio v3 auto. Gemma 4 E2B handles Transcript + Agent. LightOnOCR extracts screen text. Total ~\(String(format: "%.1f", totalModelSizeGB)) GB."
     }
 
     static func current(
@@ -666,10 +672,7 @@ final class LocalGemmaService {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !fallbackTranscript.isEmpty else { return "" }
 
-        let prompt = LocalTranscriptEnhancerPromptBuilder.transcriptEnhancerPrompt(
-            transcript: fallbackTranscript,
-            screenContext: envelope.screenContext
-        )
+        let prompt = LocalTranscriptEnhancerPromptBuilder.transcriptEnhancerPrompt(request: envelope)
         let startedAt = Date()
         DebugLog.providerEvent(
             phase: "start",
@@ -722,7 +725,7 @@ final class LocalGemmaService {
             workingAgentPrompt: envelope.workingAgentPrompt,
             includeConversationHistory: envelope.surface == "chat"
         )
-        let userPrompt = ElsonPromptCatalog.workingAgentUserPrompt(
+        let userPrompt = ElsonPromptCatalog.localWorkingAgentUserPrompt(
             envelope: envelope,
             attachmentSummary: attachmentSummary(from: envelope.attachments)
         )
@@ -1327,19 +1330,10 @@ enum LocalTranscriptEnhancerPromptBuilder {
     static func transcriptEnhancerPrompt(request envelope: ElsonRequestEnvelope) -> TranscriptEnhancerPrompt {
         let fallbackTranscript = (envelope.rawTranscript ?? envelope.enhancedTranscript)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let attachmentSummary = attachmentSummary(from: envelope.attachments)
-        let systemPrompt = ElsonPromptCatalog.transcriptAgentSystemPrompt(
-            transcriptAgentPrompt: envelope.transcriptAgentPrompt,
-            includeConversationHistory: envelope.surface == "chat"
-        )
-        let userPrompt = ElsonPromptCatalog.transcriptAgentUserPrompt(
-            envelope: envelope,
-            attachmentSummary: attachmentSummary
-        )
         return TranscriptEnhancerPrompt(
-            systemPrompt: systemPrompt,
-            userPrompt: userPrompt,
-            maxTokens: max(300, min(1600, (fallbackTranscript.count / 2) + 300))
+            systemPrompt: ElsonPromptCatalog.localGemmaTranscriptEnhancerSystemPrompt(),
+            userPrompt: ElsonPromptCatalog.localGemmaTranscriptEnhancerUserPrompt(envelope: envelope),
+            maxTokens: max(160, min(900, (fallbackTranscript.count / 2) + 240))
         )
     }
 
@@ -1359,33 +1353,14 @@ enum LocalTranscriptEnhancerPromptBuilder {
         screenContext: ElsonScreenContextPayload
     ) -> TranscriptEnhancerPrompt {
         let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-        let userInput = localUserInput(transcript: trimmed, screenContext: screenContext)
         return TranscriptEnhancerPrompt(
             systemPrompt: ElsonPromptCatalog.localGemmaTranscriptEnhancerSystemPrompt(),
-            userPrompt: ElsonPromptCatalog.localGemmaTranscriptEnhancerUserPrompt(transcript: userInput),
-            maxTokens: max(80, min(320, (trimmed.count / 4) + 48))
+            userPrompt: ElsonPromptCatalog.localGemmaTranscriptEnhancerUserPrompt(
+                transcript: trimmed,
+                screenContext: screenContext
+            ),
+            maxTokens: max(160, min(900, (trimmed.count / 2) + 240))
         )
-    }
-
-    private static func localUserInput(
-        transcript: String,
-        screenContext: ElsonScreenContextPayload
-    ) -> String {
-        guard screenContext.hasScreenContext else {
-            return transcript
-        }
-
-        let payload: [String: String] = [
-            "transcript": transcript,
-            "screen_text": screenContext.screenText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
-            "screen_description": screenContext.screenDescription?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
-        ]
-        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
-              let encoded = String(data: data, encoding: .utf8)
-        else {
-            return transcript
-        }
-        return encoded
     }
 
     private static func attachmentSummary(from attachments: [ElsonAttachmentPayload]) -> String {

@@ -87,14 +87,18 @@ struct ProcessingPipelineProfile: Equatable, Sendable {
             enhancedTranscript: request.enhancedTranscript,
             transcriptSnippetCount: request.transcriptSnippetCount,
             transcriptChunkTimings: request.transcriptChunkTimings,
-            myElsonMarkdown: "",
+            myElsonMarkdown: MyElsonDocument.wordsGlossaryMarkdown(from: request.myElsonMarkdown),
             transcriptAgentPrompt: "",
             workingAgentPrompt: "",
             selectionNote: nil,
             clipboardText: nil,
             attachments: [],
             conversationHistory: [],
-            screenContext: request.screenContext,
+            screenContext: ElsonScreenContextPayload(
+                hasScreenContext: request.screenContext.hasScreenContext,
+                screenText: request.screenContext.screenText,
+                screenDescription: nil
+            ),
             timestamps: request.timestamps,
             appContext: ElsonAppContextPayload(
                 frontmostAppName: nil,

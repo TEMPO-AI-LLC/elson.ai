@@ -170,20 +170,24 @@ final class LocalProcessingModeTests: XCTestCase {
         XCTAssertTrue(localRequest.conversationHistory.isEmpty)
         XCTAssertTrue(localRequest.screenContext.hasScreenContext)
         XCTAssertEqual(localRequest.screenContext.screenText, "screen text")
-        XCTAssertEqual(localRequest.screenContext.screenDescription, "screen description")
+        XCTAssertNil(localRequest.screenContext.screenDescription)
         XCTAssertNil(localRequest.clipboardText)
-        XCTAssertEqual(localRequest.myElsonMarkdown, "")
+        XCTAssertEqual(localRequest.myElsonMarkdown, "## Words\n- Teerling\n- Elson.ai")
         XCTAssertEqual(localRequest.transcriptAgentPrompt, "")
     }
 
     func testLocalTranscriptEnhancerPromptIsShortAndPlainTextWithoutOCR() {
         let prompt = LocalTranscriptEnhancerPromptBuilder.transcriptEnhancerPrompt(transcript: "  raw transcript  ")
 
-        XCTAssertEqual(prompt.userPrompt, "raw transcript")
-        XCTAssertTrue(prompt.systemPrompt.localizedCaseInsensitiveContains("corrected transcript"))
-        XCTAssertFalse(prompt.userPrompt.localizedCaseInsensitiveContains("screen"))
-        XCTAssertGreaterThanOrEqual(prompt.maxTokens, 80)
-        XCTAssertLessThanOrEqual(prompt.maxTokens, 320)
+        XCTAssertTrue(prompt.userPrompt.contains("raw_transcript:"))
+        XCTAssertTrue(prompt.userPrompt.contains("raw transcript"))
+        XCTAssertTrue(prompt.systemPrompt.localizedCaseInsensitiveContains("local Transcript assistant"))
+        XCTAssertTrue(prompt.systemPrompt.localizedCaseInsensitiveContains("translate"))
+        XCTAssertTrue(prompt.systemPrompt.localizedCaseInsensitiveContains("reply, email, or message"))
+        XCTAssertTrue(prompt.userPrompt.contains("screen_text:"))
+        XCTAssertFalse(prompt.userPrompt.contains("screen_description"))
+        XCTAssertGreaterThanOrEqual(prompt.maxTokens, 160)
+        XCTAssertLessThanOrEqual(prompt.maxTokens, 900)
     }
 
     func testLocalTranscriptEnhancerPromptCanCarryOCRRuntimeData() {
@@ -196,10 +200,78 @@ final class LocalProcessingModeTests: XCTestCase {
             )
         )
 
-        XCTAssertTrue(prompt.userPrompt.contains("\"transcript\":\"raw transcript\""))
-        XCTAssertTrue(prompt.userPrompt.contains("\"screen_text\":\"visible text\""))
-        XCTAssertTrue(prompt.userPrompt.contains("\"screen_description\":\"visible layout\""))
-        XCTAssertLessThanOrEqual(prompt.maxTokens, 320)
+        XCTAssertTrue(prompt.userPrompt.contains("raw_transcript:"))
+        XCTAssertTrue(prompt.userPrompt.contains("raw transcript"))
+        XCTAssertTrue(prompt.userPrompt.contains("screen_text:"))
+        XCTAssertTrue(prompt.userPrompt.contains("visible text"))
+        XCTAssertFalse(prompt.userPrompt.contains("screen_description"))
+        XCTAssertFalse(prompt.userPrompt.contains("visible layout"))
+        XCTAssertLessThanOrEqual(prompt.maxTokens, 900)
+    }
+
+    func testLocalTranscriptEnhancerPromptCarriesLeanContext() {
+        let request = LocalProcessingRouter.localTranscriptEnhancerRequest(from: makeEnvelope())
+        let prompt = LocalTranscriptEnhancerPromptBuilder.transcriptEnhancerPrompt(request: request)
+
+        XCTAssertTrue(prompt.userPrompt.contains("raw_transcript:"))
+        XCTAssertTrue(prompt.userPrompt.contains("raw transcript"))
+        XCTAssertTrue(prompt.userPrompt.contains("transcript_snippet_count: 1"))
+        XCTAssertTrue(prompt.userPrompt.contains("transcript_chunk_timing:"))
+        XCTAssertTrue(prompt.userPrompt.contains("chunk 1, snippet 1"))
+        XCTAssertTrue(prompt.userPrompt.contains("audio=0-5s"))
+        XCTAssertTrue(prompt.userPrompt.contains("local_date_time: 2026-05-14 12:00:00"))
+        XCTAssertTrue(prompt.userPrompt.contains("local_date: 2026-05-14"))
+        XCTAssertTrue(prompt.userPrompt.contains("local_time: 12:00:00"))
+        XCTAssertTrue(prompt.userPrompt.contains("timezone: Europe/Amsterdam"))
+        XCTAssertTrue(prompt.userPrompt.contains("words_glossary:"))
+        XCTAssertTrue(prompt.userPrompt.contains("Teerling"))
+        XCTAssertTrue(prompt.userPrompt.contains("screen_text:"))
+        XCTAssertTrue(prompt.userPrompt.contains("screen text"))
+        XCTAssertFalse(prompt.userPrompt.contains("screen_description"))
+        XCTAssertFalse(prompt.userPrompt.contains("clipboard"))
+        XCTAssertFalse(prompt.userPrompt.contains("myelson_markdown"))
+        XCTAssertFalse(prompt.userPrompt.contains("attachments:"))
+    }
+
+    func testLocalWorkingAgentPromptUsesLeanLocalContext() {
+        let prompt = ElsonPromptCatalog.localWorkingAgentUserPrompt(
+            envelope: makeEnvelope(),
+            attachmentSummary: "image | screen.jpg | image/jpeg | source=auto"
+        )
+
+        XCTAssertTrue(prompt.contains("raw_transcript:"))
+        XCTAssertTrue(prompt.contains("raw transcript"))
+        XCTAssertTrue(prompt.contains("transcript_snippet_count: 1"))
+        XCTAssertTrue(prompt.contains("transcript_chunk_timing:"))
+        XCTAssertTrue(prompt.contains("chunk 1, snippet 1"))
+        XCTAssertTrue(prompt.contains("audio=0-5s"))
+        XCTAssertTrue(prompt.contains("local_date_time: 2026-05-14 12:00:00"))
+        XCTAssertTrue(prompt.contains("frontmost_app_name: Safari"))
+        XCTAssertTrue(prompt.contains("frontmost_app_bundle_id: com.apple.Safari"))
+        XCTAssertTrue(prompt.contains("frontmost_window_title: Example"))
+        XCTAssertTrue(prompt.contains("words_glossary:"))
+        XCTAssertTrue(prompt.contains("clipboard_text:"))
+        XCTAssertTrue(prompt.contains("clipboard"))
+        XCTAssertTrue(prompt.contains("attachments:"))
+        XCTAssertTrue(prompt.contains("image | screen.jpg | image/jpeg | source=auto"))
+        XCTAssertTrue(prompt.contains("skills_enabled:"))
+        XCTAssertTrue(prompt.contains("myelson_markdown:"))
+        XCTAssertFalse(prompt.contains("mode_hint:"))
+        XCTAssertFalse(prompt.contains("input_source:"))
+        XCTAssertFalse(prompt.contains("screen_text:"))
+        XCTAssertFalse(prompt.contains("screen_description:"))
+        XCTAssertFalse(prompt.contains("current_transcript:"))
+    }
+
+    func testLocalProcessorCopyListsSharedGemmaOnce() {
+        let detail = LocalProcessorStatus.current().detail
+
+        XCTAssertEqual(
+            detail,
+            "FluidAudio v3 auto. Gemma 4 E2B handles Transcript + Agent. LightOnOCR extracts screen text. Total ~4.6 GB."
+        )
+        XCTAssertEqual(LocalProcessorStatus.sharedGemmaDisplayName, "Gemma 4 E2B (4-bit) (Transcript + Agent)")
+        XCTAssertEqual(LocalProcessorStatus.ocrScreenTextDisplayName, "LightOnOCR 1B (4-bit) (screen text)")
     }
 
     func testDefaultLocalConfigEnablesTranscriptOCR() {
@@ -252,8 +324,26 @@ final class LocalProcessingModeTests: XCTestCase {
             rawTranscript: "raw transcript",
             enhancedTranscript: "raw transcript",
             transcriptSnippetCount: 1,
-            transcriptChunkTimings: [],
-            myElsonMarkdown: "memory",
+            transcriptChunkTimings: [
+                ElsonTranscriptChunkTimingPayload(
+                    index: 0,
+                    transcriptSnippetIndex: 0,
+                    audioStartSeconds: 0,
+                    audioEndSeconds: 5,
+                    asrPayloadStartSeconds: 0,
+                    asrPayloadEndSeconds: 5,
+                    overlapStartSeconds: nil,
+                    overlapEndSeconds: nil,
+                    overlapDurationSeconds: 0,
+                    keptTranscriptStartSeconds: 0,
+                    keptTranscriptEndSeconds: 5
+                )
+            ],
+            myElsonMarkdown: """
+            ## Words
+            - Teerling
+            - Elson.ai
+            """,
             transcriptAgentPrompt: ElsonPromptCatalog.defaultTranscriptAgentPrompt,
             workingAgentPrompt: "agent prompt",
             selectionNote: "selection",

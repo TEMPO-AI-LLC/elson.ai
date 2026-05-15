@@ -343,10 +343,10 @@ struct InstallOnboardingView: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 8) {
                     Label("FluidAudio v3", systemImage: appSettings.localProcessorStatus.fluidAudioReady ? "checkmark.circle.fill" : "arrow.down.circle")
-                    Label(LocalProcessorStatus.ocrModel.displayName, systemImage: appSettings.localProcessorStatus.ocrReady ? "checkmark.circle.fill" : "arrow.down.circle")
+                    Label(LocalProcessorStatus.sharedGemmaDisplayName, systemImage: appSettings.localProcessorStatus.gemmaReady ? "checkmark.circle.fill" : "arrow.down.circle")
                 }
                 HStack(spacing: 8) {
-                    Label(LocalProcessorStatus.gemmaModel.displayName, systemImage: appSettings.localProcessorStatus.gemmaReady ? "checkmark.circle.fill" : "arrow.down.circle")
+                    Label(LocalProcessorStatus.ocrScreenTextDisplayName, systemImage: appSettings.localProcessorStatus.ocrReady ? "checkmark.circle.fill" : "arrow.down.circle")
                 }
             }
             .font(.system(size: 11, weight: .semibold))
