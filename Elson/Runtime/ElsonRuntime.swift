@@ -1118,12 +1118,10 @@ final class ElsonRuntime: @unchecked Sendable {
     ) async throws -> LocalScreenContext {
         let profile = LocalProcessingRouter.contextProfile(for: config, mode: mode)
         let pipelineStage = ProcessingPipelineStage(screenContextStage: stage)
-
-        if stage == "transcript_agent", !config.transcriptScreenOCR {
-            DebugLog.runtime(
-                "screen_context_stage request_id=\(requestId) thread_id=\(threadId) stage=\(stage) provider=\(provider.rawValue) ocr=disabled_by_setting"
-            )
-            return .none
+        let resolverStage: ProcessingPipelineStage = if pipelineStage == .shortcutPrefetch {
+            mode == .agent ? .workingAgent : .transcriptEnhancer
+        } else {
+            pipelineStage
         }
 
         let images = attachments.compactMap { attachment -> LocalImageInput? in
@@ -1165,6 +1163,7 @@ final class ElsonRuntime: @unchecked Sendable {
                     from: attachments,
                     config: config,
                     myElsonMarkdown: myElsonMarkdown,
+                    stage: resolverStage,
                     logContext: LocalRequestLogContext(
                         requestId: requestId,
                         threadId: threadId,
@@ -1200,6 +1199,7 @@ final class ElsonRuntime: @unchecked Sendable {
         from attachments: [ElsonAttachmentPayload],
         config: ElsonLocalConfig,
         myElsonMarkdown: String,
+        stage: ProcessingPipelineStage,
         logContext: LocalRequestLogContext
     ) async throws -> LocalScreenContext {
         let images = attachments.compactMap { attachment -> LocalImageInput? in
@@ -1220,6 +1220,7 @@ final class ElsonRuntime: @unchecked Sendable {
             images: images,
             config: config,
             myElsonMarkdown: myElsonMarkdown,
+            stage: stage,
             logContext: logContext
         )
     }

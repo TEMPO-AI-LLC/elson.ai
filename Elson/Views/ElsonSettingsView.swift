@@ -549,11 +549,6 @@ struct ElsonSettingsView: View {
                     isOn: $appSettings.restoreOriginalClipboardAfterPasteEnabled
                 )
                 .disabled(!appSettings.autoPasteEnabled)
-                Toggle("Use screenshot OCR in Transcript mode", isOn: $appSettings.transcriptScreenOCREnabled)
-                Text("When off, Transcript mode ignores screen OCR and uses only the dictated text plus normal transcript cleanup.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 Toggle("Capture full screen for screenshot context", isOn: $appSettings.fullScreenScreenshotCaptureEnabled)
                 Text("Default captures a 300 x 300 area around the pointer. Full screen may increase AI cost.")
                     .font(.system(size: 12))
@@ -808,9 +803,11 @@ struct ElsonSettingsView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 10) {
                             Label("FluidAudio", systemImage: appSettings.localProcessorStatus.fluidAudioReady ? "checkmark.circle.fill" : "arrow.down.circle")
-                            Label(LocalProcessorStatus.transcriptEnhancerModel.displayName, systemImage: appSettings.localProcessorStatus.transcriptLLMReady ? "checkmark.circle.fill" : "arrow.down.circle")
+                            Label(LocalProcessorStatus.ocrModel.displayName, systemImage: appSettings.localProcessorStatus.ocrReady ? "checkmark.circle.fill" : "arrow.down.circle")
                         }
-                        Label(LocalProcessorStatus.gemmaModel.displayName, systemImage: appSettings.localProcessorStatus.gemmaReady ? "checkmark.circle.fill" : "arrow.down.circle")
+                        HStack(spacing: 10) {
+                            Label(LocalProcessorStatus.gemmaModel.displayName, systemImage: appSettings.localProcessorStatus.gemmaReady ? "checkmark.circle.fill" : "arrow.down.circle")
+                        }
                     }
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
@@ -874,7 +871,7 @@ struct ElsonSettingsView: View {
     private var transcriptModePipelineText: String {
         switch appSettings.runtimeMode {
         case .local:
-            return "FluidAudio ASR + Gemma 4"
+            return "FluidAudio ASR + LightOnOCR + Gemma 4 E2B"
         case .hosted:
             return "Groq STT + OCR, then Cerebras"
         }
@@ -883,7 +880,7 @@ struct ElsonSettingsView: View {
     private var agentModePipelineText: String {
         switch appSettings.runtimeMode {
         case .local:
-            return "FluidAudio ASR + Gemma 4 vision"
+            return "FluidAudio ASR + Gemma 4 E2B vision"
         case .hosted:
             return "Groq STT + screenshot to Gemini"
         }

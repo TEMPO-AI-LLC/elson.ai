@@ -7,6 +7,7 @@ import MLX
 import MLXLLM
 import MLXLMCommon
 import MLXRandom
+import MLXVLM
 
 enum LocalProcessingAudioBackend: String, Sendable {
     case fluidAudio
@@ -16,6 +17,12 @@ enum LocalProcessingAudioBackend: String, Sendable {
 enum LocalProcessingLLMBackend: String, Sendable {
     case localModels
     case hostedProviders
+}
+
+enum LocalProcessingCommandWarmupTarget: Equatable, Sendable {
+    case none
+    case transcriptEnhancer
+    case workingAgent
 }
 
 enum LocalProcessorPaths {
@@ -142,6 +149,8 @@ enum LocalProcessorModelCache {
 struct LocalProcessorProgress: Equatable, Sendable {
     enum Stage: String, Equatable, Sendable {
         case fluidAudio
+        case ocrDownload
+        case ocrLoad
         case transcriptLLMDownload
         case transcriptLLMLoad
         case gemmaDownload
@@ -166,26 +175,32 @@ struct LocalProcessorStatus: Equatable, Sendable {
     let fluidAudioReady: Bool
     let transcriptLLMReady: Bool
     let gemmaReady: Bool
+    let ocrReady: Bool
     let isPreparing: Bool
     let progress: LocalProcessorProgress?
     let errorMessage: String?
 
+    static let gemmaModel = Gemma4Pipeline.Model.e2b4bit
     static let transcriptEnhancerModel = LocalProcessorLLMModel(
-        id: "prism-ml/Ternary-Bonsai-8B-mlx-2bit",
-        displayName: "Ternary Bonsai 8B (2-bit)",
-        estimatedSizeGB: 2.3
+        id: gemmaModel.rawValue,
+        displayName: gemmaModel.displayName,
+        estimatedSizeGB: Double(gemmaModel.estimatedSizeGB)
     )
-    static let gemmaModel = Gemma4Pipeline.Model.e4b4bit
+    static let ocrModel = LocalProcessorLLMModel(
+        id: "mlx-community/LightOnOCR-1B-1025-4bit",
+        displayName: "LightOnOCR 1B (4-bit)",
+        estimatedSizeGB: 1.0
+    )
     static let activeLLMModelIDs: Set<String> = [
-        transcriptEnhancerModel.id,
         gemmaModel.rawValue,
+        ocrModel.id,
     ]
     static var activeLLMModelSignature: String {
         activeLLMModelIDs.sorted().joined(separator: "|")
     }
 
     var isReady: Bool {
-        fluidAudioReady && transcriptLLMReady && gemmaReady && errorMessage == nil
+        fluidAudioReady && gemmaReady && ocrReady && errorMessage == nil
     }
 
     var summary: String {
@@ -204,13 +219,14 @@ struct LocalProcessorStatus: Equatable, Sendable {
 
         var missing: [String] = []
         if !fluidAudioReady { missing.append("FluidAudio") }
-        if !transcriptLLMReady { missing.append("Bonsai") }
-        if !gemmaReady { missing.append("Gemma 4") }
+        if !ocrReady { missing.append("LightOnOCR") }
+        if !gemmaReady { missing.append("Gemma 4 E2B") }
         return missing.isEmpty ? "Local processor not checked." : "Download required: \(missing.joined(separator: ", "))."
     }
 
     var detail: String {
-        "FluidAudio v3 auto. Transcript: \(Self.transcriptEnhancerModel.displayName), ~\(String(format: "%.1f", Self.transcriptEnhancerModel.estimatedSizeGB)) GB. Agent: \(Self.gemmaModel.displayName), ~\(String(format: "%.1f", Self.gemmaModel.estimatedSizeGB)) GB."
+        let totalModelSizeGB = Double(Self.gemmaModel.estimatedSizeGB) + Self.ocrModel.estimatedSizeGB
+        return "FluidAudio v3 auto. Transcript: OCR with \(Self.ocrModel.displayName) + \(Self.gemmaModel.displayName). Agent: \(Self.gemmaModel.displayName). Total ~\(String(format: "%.1f", totalModelSizeGB)) GB."
     }
 
     static func current(
@@ -220,12 +236,13 @@ struct LocalProcessorStatus: Equatable, Sendable {
     ) -> LocalProcessorStatus {
         LocalProcessorPaths.configureLLMCache()
         let asrReady = AsrModels.modelsExist(at: AsrModels.defaultCacheDirectory(for: .v3))
-        let transcriptLLMReady = LocalProcessorModelCache.isDownloaded(transcriptEnhancerModel)
         let gemmaReady = LocalProcessorModelCache.isDownloaded(gemmaModel)
+        let ocrReady = LocalProcessorModelCache.isDownloaded(ocrModel)
         return LocalProcessorStatus(
             fluidAudioReady: asrReady,
-            transcriptLLMReady: transcriptLLMReady,
+            transcriptLLMReady: gemmaReady,
             gemmaReady: gemmaReady,
+            ocrReady: ocrReady,
             isPreparing: isPreparing,
             progress: progress,
             errorMessage: errorMessage
@@ -290,6 +307,34 @@ extension LocalProcessorProgress {
             fraction: 0.98,
             title: "Loading \(modelName)...",
             detail: "Warming the local model pipeline."
+        )
+    }
+
+    static func ocrStarting() -> LocalProcessorProgress {
+        let modelName = LocalProcessorStatus.ocrModel.displayName
+        return LocalProcessorProgress(
+            stage: .ocrDownload,
+            fraction: 0.02,
+            title: "Preparing \(modelName)...",
+            detail: "Checking local OCR model cache."
+        )
+    }
+
+    static func ocrDownload(_ progress: Gemma4DownloadProgress) -> LocalProcessorProgress {
+        llmDownloadProgress(
+            progress,
+            modelName: LocalProcessorStatus.ocrModel.displayName,
+            stage: .ocrDownload
+        )
+    }
+
+    static func ocrLoading() -> LocalProcessorProgress {
+        let modelName = LocalProcessorStatus.ocrModel.displayName
+        return LocalProcessorProgress(
+            stage: .ocrLoad,
+            fraction: 0.98,
+            title: "Loading \(modelName)...",
+            detail: "Warming the local OCR model pipeline."
         )
     }
 
@@ -425,8 +470,9 @@ actor FluidAudioTranscriber: LocalAudioTranscribing {
 }
 
 @MainActor
-final class LocalBonsaiTranscriptEnhancerService {
-    static let shared = LocalBonsaiTranscriptEnhancerService()
+final class LocalLightOnOCRService {
+    static let shared = LocalLightOnOCRService()
+
     private var container: ModelContainer?
     private var isPreparing = false
 
@@ -449,7 +495,7 @@ final class LocalBonsaiTranscriptEnhancerService {
 
         try LocalProcessorModelCache.removeStaleModels()
         try LocalProcessorModelCache.prepareDownloadRoot()
-        let model = LocalProcessorStatus.transcriptEnhancerModel
+        let model = LocalProcessorStatus.ocrModel
         if !LocalProcessorModelCache.isDownloaded(model) {
             _ = try await Gemma4ModelDownloader.download(
                 modelId: model.id,
@@ -458,91 +504,113 @@ final class LocalBonsaiTranscriptEnhancerService {
         }
 
         guard let localPath = LocalProcessorModelCache.localPath(for: model.id) else {
-            throw LocalAIServiceError.invalidResponse("Bonsai local model cache")
+            throw LocalAIServiceError.invalidResponse("LightOnOCR local model cache")
         }
 
+        try Self.patchLightOnProcessorConfigIfNeeded(at: localPath)
         loadStarted?()
-        container = try await loadModelContainer(from: localPath, using: Gemma4TokenizerLoader())
+        container = try await VLMModelFactory.shared.loadContainer(
+            from: localPath,
+            using: Gemma4TokenizerLoader()
+        )
     }
 
-    func runTranscriptAgent(request envelope: ElsonRequestEnvelope) async throws -> String {
-        try await enhanceTranscript(request: envelope)
-    }
-
-    func enhanceTranscript(request envelope: ElsonRequestEnvelope) async throws -> String {
-        let fallbackTranscript = (envelope.rawTranscript ?? envelope.enhancedTranscript)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !fallbackTranscript.isEmpty else { return "" }
-
-        let prompt = LocalTranscriptEnhancerPromptBuilder.transcriptEnhancerPrompt(transcript: fallbackTranscript)
+    func extractScreenContext(
+        images: [LocalImageInput],
+        logContext: LocalRequestLogContext
+    ) async throws -> LocalScreenContext {
+        guard !images.isEmpty else { return .none }
         let startedAt = Date()
+        let prompt = ElsonPromptCatalog.localOCRUserPrompt()
+
         DebugLog.providerEvent(
             phase: "start",
-            service: "local_bonsai_transcript_agent",
-            model: LocalProcessorStatus.transcriptEnhancerModel.id,
-            metadata: "request_id=\(envelope.requestId) thread_id=\(envelope.threadId) surface=\(envelope.surface) input_source=\(envelope.inputSource) profile=local_text_only raw_chars=\(fallbackTranscript.count)",
-            payloadPreview: ""
+            service: "local_lighton_ocr_screen_extraction",
+            model: LocalProcessorStatus.ocrModel.id,
+            metadata: "\(logContext.metadata) images=\(images.count)",
+            payloadPreview: prompt
         )
 
         let output: String
         do {
-            output = try await generateText(
-                systemPrompt: prompt.systemPrompt,
-                userPrompt: prompt.userPrompt,
-                temperature: 0.0,
-                maxTokens: prompt.maxTokens
+            output = try await generateOCRText(
+                prompt: prompt,
+                images: images,
+                maxTokens: 1200
             )
         } catch {
-            DebugLog.providerEvent(
-                phase: "error",
-                service: "local_bonsai_transcript_agent",
-                model: LocalProcessorStatus.transcriptEnhancerModel.id,
-                metadata: "request_id=\(envelope.requestId) thread_id=\(envelope.threadId) surface=\(envelope.surface) input_source=\(envelope.inputSource) profile=local_text_only duration_ms=\(durationMS(since: startedAt))",
-                payloadPreview: error.localizedDescription
+            DebugLog.providerFailure(
+                service: "local_lighton_ocr_screen_extraction",
+                model: LocalProcessorStatus.ocrModel.id,
+                metadata: "\(logContext.metadata) duration_ms=\(durationMS(since: startedAt)) images=\(images.count)",
+                error: error.localizedDescription
             )
             throw error
         }
 
+        let context = Self.screenContext(fromOCRText: output)
         DebugLog.providerEvent(
             phase: "success",
-            service: "local_bonsai_transcript_agent",
-            model: LocalProcessorStatus.transcriptEnhancerModel.id,
-            metadata: "request_id=\(envelope.requestId) thread_id=\(envelope.threadId) surface=\(envelope.surface) input_source=\(envelope.inputSource) profile=local_text_only duration_ms=\(durationMS(since: startedAt)) output_chars=\(output.count)",
+            service: "local_lighton_ocr_screen_extraction",
+            model: LocalProcessorStatus.ocrModel.id,
+            metadata: "\(logContext.metadata) duration_ms=\(durationMS(since: startedAt)) images=\(images.count) has_screen_context=\(context.hasScreenContext)",
             payloadPreview: output
         )
-
-        return stripThinkingBlocks(from: output)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .nilIfEmpty ?? fallbackTranscript
+        return context
     }
 
-    private func generateText(
-        systemPrompt: String,
-        userPrompt: String,
-        temperature: Float,
+    nonisolated static func screenContext(fromOCRText rawText: String) -> LocalScreenContext {
+        let text = rawText
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty
+        return LocalScreenContext(
+            hasScreenContext: text != nil,
+            screenText: text,
+            screenDescription: nil
+        )
+    }
+
+    private func generateOCRText(
+        prompt: String,
+        images: [LocalImageInput],
         maxTokens: Int
     ) async throws -> String {
         try await prepare()
         guard let container else {
-            throw LocalAIServiceError.invalidResponse("Local Bonsai model")
+            throw LocalAIServiceError.invalidResponse("Local LightOnOCR model")
         }
 
-        let parameters = GenerateParameters(maxTokens: maxTokens, temperature: temperature, topP: 0.95)
-        let session = ChatSession(container, instructions: systemPrompt, generateParameters: parameters)
-        return try await session.respond(to: userPrompt)
-    }
-
-    private func stripThinkingBlocks(from output: String) -> String {
-        var text = output
-        while let start = text.range(of: "<think>", options: [.caseInsensitive]),
-              let end = text.range(of: "</think>", options: [.caseInsensitive], range: start.upperBound ..< text.endIndex) {
-            text.removeSubrange(start.lowerBound ..< end.upperBound)
+        let userImages = try images.map { image -> UserInput.Image in
+            guard let ciImage = CIImage(data: image.data) else {
+                throw LocalAIServiceError.invalidResponse("Local LightOnOCR image input")
+            }
+            return .ciImage(ciImage)
         }
-        return text
+        let parameters = GenerateParameters(maxTokens: maxTokens, temperature: 0.0, topP: 1)
+        nonisolated(unsafe) let capturedImages = userImages
+        nonisolated(unsafe) let session = ChatSession(
+            container,
+            generateParameters: parameters,
+            processing: .init(resize: nil)
+        )
+        return try await session
+            .respond(to: prompt, images: capturedImages, videos: [])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func durationMS(since startedAt: Date) -> Int {
         Int(Date().timeIntervalSince(startedAt) * 1000)
+    }
+
+    private static func patchLightOnProcessorConfigIfNeeded(at modelDirectory: URL) throws {
+        let processorConfigURL = modelDirectory.appendingPathComponent("processor_config.json")
+        let data = try Data(contentsOf: processorConfigURL)
+        guard var object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        guard object["processor_class"] as? String == "LightOnOCRProcessor" else { return }
+        guard object["image_token"] == nil else { return }
+        object["image_token"] = "<|image_pad|>"
+        let patched = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+        try patched.write(to: processorConfigURL, options: .atomic)
     }
 }
 
@@ -589,6 +657,66 @@ final class LocalGemmaService {
         container = try await loadModelContainer(from: localPath, using: Gemma4TokenizerLoader())
     }
 
+    func runTranscriptAgent(request envelope: ElsonRequestEnvelope) async throws -> String {
+        try await enhanceTranscript(request: envelope)
+    }
+
+    func enhanceTranscript(request envelope: ElsonRequestEnvelope) async throws -> String {
+        let fallbackTranscript = (envelope.rawTranscript ?? envelope.enhancedTranscript)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !fallbackTranscript.isEmpty else { return "" }
+
+        let prompt = LocalTranscriptEnhancerPromptBuilder.transcriptEnhancerPrompt(
+            transcript: fallbackTranscript,
+            screenContext: envelope.screenContext
+        )
+        let startedAt = Date()
+        DebugLog.providerEvent(
+            phase: "start",
+            service: "local_gemma_e2b_transcript_enhancer",
+            model: LocalProcessorStatus.gemmaModel.rawValue,
+            metadata: "request_id=\(envelope.requestId) thread_id=\(envelope.threadId) surface=\(envelope.surface) input_source=\(envelope.inputSource) profile=local_gemma_e2b raw_chars=\(fallbackTranscript.count) has_screen_context=\(envelope.screenContext.hasScreenContext)",
+            payloadPreview: """
+            system:
+            \(prompt.systemPrompt)
+
+            user:
+            \(prompt.userPrompt)
+            """
+        )
+
+        let output: String
+        do {
+            output = try await generateText(
+                systemPrompt: prompt.systemPrompt,
+                userPrompt: prompt.userPrompt,
+                temperature: 0.0,
+                maxTokens: prompt.maxTokens
+            )
+        } catch {
+            DebugLog.providerEvent(
+                phase: "error",
+                service: "local_gemma_e2b_transcript_enhancer",
+                model: LocalProcessorStatus.gemmaModel.rawValue,
+                metadata: "request_id=\(envelope.requestId) thread_id=\(envelope.threadId) surface=\(envelope.surface) input_source=\(envelope.inputSource) profile=local_gemma_e2b duration_ms=\(durationMS(since: startedAt))",
+                payloadPreview: error.localizedDescription
+            )
+            throw error
+        }
+
+        DebugLog.providerEvent(
+            phase: "success",
+            service: "local_gemma_e2b_transcript_enhancer",
+            model: LocalProcessorStatus.gemmaModel.rawValue,
+            metadata: "request_id=\(envelope.requestId) thread_id=\(envelope.threadId) surface=\(envelope.surface) input_source=\(envelope.inputSource) profile=local_gemma_e2b duration_ms=\(durationMS(since: startedAt)) output_chars=\(output.count)",
+            payloadPreview: output
+        )
+
+        return stripThinkingBlocks(from: output)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty ?? fallbackTranscript
+    }
+
     func runWorkingAgent(request envelope: ElsonRequestEnvelope) async throws -> AgentDecision {
         let systemPrompt = ElsonPromptCatalog.workingAgentSystemPrompt(
             workingAgentPrompt: envelope.workingAgentPrompt,
@@ -613,7 +741,8 @@ final class LocalGemmaService {
                 userPrompt: userPrompt,
                 images: images,
                 temperature: 0.1,
-                maxTokens: 1200
+                maxTokens: 1200,
+                thinkingMode: .enabled
             )
         }
 
@@ -680,7 +809,7 @@ final class LocalGemmaService {
         }
 
         let parameters = GenerateParameters(maxTokens: maxTokens, temperature: temperature, topP: 0.95)
-        let session = ChatSession(container, instructions: systemPrompt, generateParameters: parameters)
+        nonisolated(unsafe) let session = ChatSession(container, instructions: systemPrompt, generateParameters: parameters)
         return try await session.respond(to: userPrompt)
     }
 
@@ -689,7 +818,8 @@ final class LocalGemmaService {
         userPrompt: String,
         images: [LocalImageInput],
         temperature: Float,
-        maxTokens: Int
+        maxTokens: Int,
+        thinkingMode: Gemma4ThinkingMode = .disabled
     ) async throws -> String {
         try await prepare()
         guard let container else {
@@ -724,7 +854,7 @@ final class LocalGemmaService {
 
         nonisolated(unsafe) let capturedInputIds = MLXArray(tokenIds.map { Int32($0) })
         nonisolated(unsafe) let capturedPixelValues = pixelValues
-        let tokenFilter = Gemma4TokenFilter(mode: .disabled)
+        let tokenFilter = Gemma4TokenFilter(mode: thinkingMode)
 
         let generated = await container.perform { context in
             if let model = context.model as? Gemma4MultimodalLLMModel {
@@ -821,6 +951,38 @@ final class LocalGemmaService {
         return Data(base64Encoded: String(dataRef[separator.upperBound...]))
     }
 
+    private func stripThinkingBlocks(from output: String) -> String {
+        var text = output
+        while let start = text.range(of: "<think>", options: [.caseInsensitive]),
+              let end = text.range(of: "</think>", options: [.caseInsensitive], range: start.upperBound ..< text.endIndex) {
+            text.removeSubrange(start.lowerBound ..< end.upperBound)
+        }
+        let thoughtMarkers = ["<|channel|>thought", "<|channel>thought"]
+        let responseMarkers = ["<|channel|>response", "<|channel>response"]
+        for marker in thoughtMarkers {
+            while let start = text.range(of: marker, options: [.caseInsensitive]) {
+                if let response = responseMarkers.compactMap({ responseMarker in
+                    text.range(of: responseMarker, options: [.caseInsensitive], range: start.upperBound ..< text.endIndex)
+                }).min(by: { $0.lowerBound < $1.lowerBound }) {
+                    text.removeSubrange(start.lowerBound ..< response.lowerBound)
+                } else if let end = text.range(of: "<|end|>", options: [.caseInsensitive], range: start.upperBound ..< text.endIndex) {
+                    text.removeSubrange(start.lowerBound ..< end.upperBound)
+                } else {
+                    text.removeSubrange(start.lowerBound ..< text.endIndex)
+                }
+            }
+        }
+        for marker in responseMarkers {
+            if let response = text.range(of: marker, options: [.caseInsensitive]) {
+                text = String(text[response.upperBound...])
+            }
+        }
+        for marker in ["<|message|>", "<|end|>"] {
+            text = text.replacingOccurrences(of: marker, with: "")
+        }
+        return text
+    }
+
     private func attachmentSummary(from attachments: [ElsonAttachmentPayload]) -> String {
         guard !attachments.isEmpty else { return "None" }
         return attachments.map { attachment in
@@ -855,6 +1017,16 @@ enum LocalProcessingRouter {
         ProcessingPipelineProfile(runtimeMode: runtimeMode, interactionMode: mode)
     }
 
+    static func commandWarmupTarget(for config: ElsonLocalConfig, mode: InteractionMode) -> LocalProcessingCommandWarmupTarget {
+        guard config.runtimeMode == .local else { return .none }
+        switch mode {
+        case .transcription:
+            return .transcriptEnhancer
+        case .agent:
+            return .workingAgent
+        }
+    }
+
     static func localTranscriptEnhancerRequest(from request: ElsonRequestEnvelope) -> ElsonRequestEnvelope {
         ProcessingPipelineProfile(runtimeMode: .local, interactionMode: .transcription)
             .transcriptEnhancerRequest(from: request)
@@ -883,14 +1055,14 @@ enum LocalProcessingRouter {
             }
         }
 
-        await progress?(.transcriptLLMStarting())
+        await progress?(.ocrStarting())
         try LocalProcessorModelCache.prepareDownloadRoot()
-        if !LocalProcessorModelCache.isDownloaded(LocalProcessorStatus.transcriptEnhancerModel) {
+        if !LocalProcessorModelCache.isDownloaded(LocalProcessorStatus.ocrModel) {
             _ = try await Gemma4ModelDownloader.download(
-                modelId: LocalProcessorStatus.transcriptEnhancerModel.id,
+                modelId: LocalProcessorStatus.ocrModel.id,
                 progress: { modelProgress in
                     Task { @MainActor in
-                        progress?(.transcriptLLMDownload(modelProgress))
+                        progress?(.ocrDownload(modelProgress))
                     }
                 }
             )
@@ -915,6 +1087,35 @@ enum LocalProcessingRouter {
     static func warmLocalProcessor(
         progress: (@MainActor @Sendable (LocalProcessorProgress) -> Void)? = nil
     ) async throws -> LocalProcessorStatus {
+        try await warmFluidAudio(progress: progress)
+        return LocalProcessorStatus.current()
+    }
+
+    static func warmLocalProcessorForCommand(
+        mode: InteractionMode,
+        config: ElsonLocalConfig,
+        progress: (@MainActor @Sendable (LocalProcessorProgress) -> Void)? = nil
+    ) async throws -> LocalProcessorStatus {
+        let target = commandWarmupTarget(for: config, mode: mode)
+        guard target != .none else {
+            return LocalProcessorStatus.current()
+        }
+
+        try LocalProcessorModelCache.removeStaleModels()
+        DebugLog.runtime("local_processor_command_warmup_started mode=\(mode.rawValue) target=\(target)")
+
+        async let audioWarmup: Void = warmFluidAudio(progress: progress)
+        async let llmWarmup: Void = warmCommandLLM(target: target, config: config, progress: progress)
+        try await audioWarmup
+        try await llmWarmup
+
+        DebugLog.runtime("local_processor_command_warmup_completed mode=\(mode.rawValue) target=\(target)")
+        return LocalProcessorStatus.current()
+    }
+
+    private static func warmFluidAudio(
+        progress: (@MainActor @Sendable (LocalProcessorProgress) -> Void)? = nil
+    ) async throws {
         DebugLog.runtime("local_processor_warmup_stage stage=fluid_audio_load_started")
         await progress?(.fluidAudioStarting())
         try await FluidAudioTranscriber.shared.prepare { fluidProgress in
@@ -923,10 +1124,37 @@ enum LocalProcessingRouter {
             }
         }
         DebugLog.runtime("local_processor_warmup_stage stage=fluid_audio_load_completed")
+    }
 
+    private static func warmCommandLLM(
+        target: LocalProcessingCommandWarmupTarget,
+        config: ElsonLocalConfig,
+        progress: (@MainActor @Sendable (LocalProcessorProgress) -> Void)? = nil
+    ) async throws {
+        switch target {
+        case .none:
+            return
+        case .transcriptEnhancer:
+            _ = config
+            try await warmTranscriptEnhancer(progress: progress)
+        case .workingAgent:
+            try await warmWorkingAgent(progress: progress)
+        }
+    }
+
+    private static func warmTranscriptEnhancer(
+        progress: (@MainActor @Sendable (LocalProcessorProgress) -> Void)? = nil
+    ) async throws {
+        try await warmOCR(progress: progress)
+        try await warmGemmaForTranscriptEnhancer(progress: progress)
+    }
+
+    private static func warmGemmaForTranscriptEnhancer(
+        progress: (@MainActor @Sendable (LocalProcessorProgress) -> Void)? = nil
+    ) async throws {
         DebugLog.runtime("local_processor_warmup_stage stage=transcript_llm_load_started")
         await progress?(.transcriptLLMStarting())
-        try await LocalBonsaiTranscriptEnhancerService.shared.prepare(
+        try await LocalGemmaService.shared.prepare(
             progress: { modelProgress in
                 Task { @MainActor in
                     progress?(.transcriptLLMDownload(modelProgress))
@@ -939,7 +1167,31 @@ enum LocalProcessingRouter {
             }
         )
         DebugLog.runtime("local_processor_warmup_stage stage=transcript_llm_load_completed")
+    }
 
+    private static func warmOCR(
+        progress: (@MainActor @Sendable (LocalProcessorProgress) -> Void)? = nil
+    ) async throws {
+        DebugLog.runtime("local_processor_warmup_stage stage=lighton_ocr_load_started")
+        await progress?(.ocrStarting())
+        try await LocalLightOnOCRService.shared.prepare(
+            progress: { modelProgress in
+                Task { @MainActor in
+                    progress?(.ocrDownload(modelProgress))
+                }
+            },
+            loadStarted: {
+                Task { @MainActor in
+                    progress?(.ocrLoading())
+                }
+            }
+        )
+        DebugLog.runtime("local_processor_warmup_stage stage=lighton_ocr_load_completed")
+    }
+
+    private static func warmWorkingAgent(
+        progress: (@MainActor @Sendable (LocalProcessorProgress) -> Void)? = nil
+    ) async throws {
         DebugLog.runtime("local_processor_warmup_stage stage=gemma_load_started")
         await progress?(.gemmaStarting())
         try await LocalGemmaService.shared.prepare(
@@ -955,7 +1207,6 @@ enum LocalProcessingRouter {
             }
         )
         DebugLog.runtime("local_processor_warmup_stage stage=gemma_load_completed")
-        return LocalProcessorStatus.current()
     }
 
     static func transcribeDetailed(
@@ -1003,8 +1254,9 @@ enum LocalProcessingRouter {
     ) async throws -> String {
         switch config.runtimeMode {
         case .local:
-            return try await LocalBonsaiTranscriptEnhancerService.shared.runTranscriptAgent(
-                request: localTranscriptEnhancerRequest(from: request)
+            return try await LocalGemmaService.shared.runTranscriptAgent(
+                request: ProcessingPipelineProfile(config: config, mode: .transcription)
+                    .transcriptEnhancerRequest(from: request)
             )
         case .hosted:
             return try await LocalAIService().runTranscriptAgent(
@@ -1038,10 +1290,17 @@ enum LocalProcessingRouter {
         images: [LocalImageInput],
         config: ElsonLocalConfig,
         myElsonMarkdown: String,
+        stage: ProcessingPipelineStage,
         logContext: LocalRequestLogContext
     ) async throws -> LocalScreenContext {
         switch config.runtimeMode {
         case .local:
+            if stage == .transcriptEnhancer {
+                return try await LocalLightOnOCRService.shared.extractScreenContext(
+                    images: images,
+                    logContext: logContext
+                )
+            }
             return try await LocalGemmaService.shared.extractScreenContext(
                 images: images,
                 myElsonMarkdown: myElsonMarkdown,
@@ -1065,13 +1324,75 @@ enum LocalTranscriptEnhancerPromptBuilder {
         let maxTokens: Int
     }
 
+    static func transcriptEnhancerPrompt(request envelope: ElsonRequestEnvelope) -> TranscriptEnhancerPrompt {
+        let fallbackTranscript = (envelope.rawTranscript ?? envelope.enhancedTranscript)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let attachmentSummary = attachmentSummary(from: envelope.attachments)
+        let systemPrompt = ElsonPromptCatalog.transcriptAgentSystemPrompt(
+            transcriptAgentPrompt: envelope.transcriptAgentPrompt,
+            includeConversationHistory: envelope.surface == "chat"
+        )
+        let userPrompt = ElsonPromptCatalog.transcriptAgentUserPrompt(
+            envelope: envelope,
+            attachmentSummary: attachmentSummary
+        )
+        return TranscriptEnhancerPrompt(
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            maxTokens: max(300, min(1600, (fallbackTranscript.count / 2) + 300))
+        )
+    }
+
     static func transcriptEnhancerPrompt(transcript: String) -> TranscriptEnhancerPrompt {
+        transcriptEnhancerPrompt(
+            transcript: transcript,
+            screenContext: ElsonScreenContextPayload(
+                hasScreenContext: false,
+                screenText: nil,
+                screenDescription: nil
+            )
+        )
+    }
+
+    static func transcriptEnhancerPrompt(
+        transcript: String,
+        screenContext: ElsonScreenContextPayload
+    ) -> TranscriptEnhancerPrompt {
         let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        let userInput = localUserInput(transcript: trimmed, screenContext: screenContext)
         return TranscriptEnhancerPrompt(
             systemPrompt: ElsonPromptCatalog.localGemmaTranscriptEnhancerSystemPrompt(),
-            userPrompt: ElsonPromptCatalog.localGemmaTranscriptEnhancerUserPrompt(transcript: trimmed),
-            maxTokens: max(180, min(700, (trimmed.count / 3) + 96))
+            userPrompt: ElsonPromptCatalog.localGemmaTranscriptEnhancerUserPrompt(transcript: userInput),
+            maxTokens: max(80, min(320, (trimmed.count / 4) + 48))
         )
+    }
+
+    private static func localUserInput(
+        transcript: String,
+        screenContext: ElsonScreenContextPayload
+    ) -> String {
+        guard screenContext.hasScreenContext else {
+            return transcript
+        }
+
+        let payload: [String: String] = [
+            "transcript": transcript,
+            "screen_text": screenContext.screenText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+            "screen_description": screenContext.screenDescription?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+              let encoded = String(data: data, encoding: .utf8)
+        else {
+            return transcript
+        }
+        return encoded
+    }
+
+    private static func attachmentSummary(from attachments: [ElsonAttachmentPayload]) -> String {
+        guard !attachments.isEmpty else { return "None" }
+        return attachments.map { attachment in
+            "\(attachment.kind) | \(attachment.name) | \(attachment.mime) | source=\(attachment.source)"
+        }.joined(separator: "\n")
     }
 }
 

@@ -90,8 +90,19 @@ final class LocalProcessingModeTests: XCTestCase {
         XCTAssertEqual(LocalProcessingRouter.audioBackend(for: localConfig), .fluidAudio)
         XCTAssertEqual(LocalProcessingRouter.llmBackend(for: localConfig), .localModels)
         XCTAssertTrue(LocalProcessingRouter.audioTranscriber(for: localConfig) is FluidAudioTranscriber)
-        XCTAssertEqual(LocalProcessorStatus.transcriptEnhancerModel.id, "prism-ml/Ternary-Bonsai-8B-mlx-2bit")
-        XCTAssertEqual(LocalProcessorStatus.gemmaModel, .e4b4bit)
+        XCTAssertEqual(LocalProcessorStatus.transcriptEnhancerModel.id, "mlx-community/gemma-4-e2b-it-4bit")
+        XCTAssertEqual(LocalProcessorStatus.gemmaModel, .e2b4bit)
+        XCTAssertEqual(LocalProcessorStatus.ocrModel.id, "mlx-community/LightOnOCR-1B-1025-4bit")
+        XCTAssertEqual(
+            LocalProcessorStatus.activeLLMModelIDs,
+            [
+                LocalProcessorStatus.gemmaModel.rawValue,
+                LocalProcessorStatus.ocrModel.id,
+            ]
+        )
+        XCTAssertFalse(LocalProcessorStatus.activeLLMModelIDs.contains("prism-ml/Ternary-Bonsai-8B-mlx-2bit"))
+        XCTAssertFalse(LocalProcessorStatus.activeLLMModelIDs.contains("mlx-community/gemma-4-e4b-it-4bit"))
+        XCTAssertFalse(LocalProcessorStatus.activeLLMModelIDs.contains("mlx-community/GLM-OCR-8bit"))
 
         var hostedConfig = ElsonLocalConfig.default
         hostedConfig.runtimeMode = .hosted
@@ -100,14 +111,17 @@ final class LocalProcessingModeTests: XCTestCase {
         XCTAssertTrue(LocalProcessingRouter.audioTranscriber(for: hostedConfig) is LocalAIService)
     }
 
-    func testProcessingProfilesKeepLocalEnhancerTextOnlyAndAgentMultimodal() {
+    func testProcessingProfilesKeepLocalEnhancerOCRTextAndAgentMultimodal() {
         let localTranscript = LocalProcessingRouter.contextProfile(runtimeMode: .local, mode: .transcription)
-        XCTAssertFalse(localTranscript.shouldPrefetchScreenContext)
-        XCTAssertFalse(localTranscript.shouldResolveScreenContext(for: .transcriptEnhancer))
+        XCTAssertTrue(localTranscript.shouldPrefetchScreenContext)
+        XCTAssertTrue(localTranscript.shouldResolveScreenContext(for: .transcriptEnhancer))
+        XCTAssertTrue(localTranscript.shouldResolveScreenContext(for: .shortcutPrefetch))
         XCTAssertFalse(localTranscript.shouldPassImagesToTranscriptEnhancer)
+        XCTAssertEqual(localTranscript.transcriptEnhancerProfileName, "local_ocr_text")
 
         let localAgent = LocalProcessingRouter.contextProfile(runtimeMode: .local, mode: .agent)
         XCTAssertTrue(localAgent.shouldPrefetchScreenContext)
+        XCTAssertTrue(localAgent.shouldResolveScreenContext(for: .shortcutPrefetch))
         XCTAssertTrue(localAgent.shouldResolveScreenContext(for: .workingAgent))
         XCTAssertTrue(localAgent.shouldPassImagesToWorkingAgent)
 
@@ -115,31 +129,81 @@ final class LocalProcessingModeTests: XCTestCase {
         XCTAssertTrue(hostedTranscript.shouldPrefetchScreenContext)
         XCTAssertTrue(hostedTranscript.shouldResolveScreenContext(for: .transcriptEnhancer))
         XCTAssertTrue(hostedTranscript.shouldPassImagesToTranscriptEnhancer)
+        XCTAssertEqual(hostedTranscript.transcriptEnhancerProfileName, "cloud_full_context")
     }
 
-    func testLocalTranscriptEnhancerRequestStripsContext() {
+    func testLocalCommandWarmupTargetsAreModeSpecific() {
+        var localConfig = ElsonLocalConfig.default
+        localConfig.runtimeMode = .local
+
+        XCTAssertEqual(
+            LocalProcessingRouter.commandWarmupTarget(for: localConfig, mode: .transcription),
+            .transcriptEnhancer
+        )
+        XCTAssertEqual(
+            LocalProcessingRouter.commandWarmupTarget(for: localConfig, mode: .agent),
+            .workingAgent
+        )
+
+        var hostedConfig = ElsonLocalConfig.default
+        hostedConfig.runtimeMode = .hosted
+        XCTAssertEqual(
+            LocalProcessingRouter.commandWarmupTarget(for: hostedConfig, mode: .transcription),
+            .none
+        )
+        XCTAssertEqual(
+            LocalProcessingRouter.commandWarmupTarget(for: hostedConfig, mode: .agent),
+            .none
+        )
+    }
+
+    func testLocalTranscriptEnhancerRequestKeepsOCRTextAndStripsHeavyContext() {
         let request = makeEnvelope()
         let localRequest = LocalProcessingRouter.localTranscriptEnhancerRequest(from: request)
 
         XCTAssertEqual(localRequest.rawTranscript, request.rawTranscript)
         XCTAssertEqual(localRequest.enhancedTranscript, request.enhancedTranscript)
+        XCTAssertEqual(localRequest.transcriptSnippetCount, request.transcriptSnippetCount)
+        XCTAssertEqual(localRequest.transcriptChunkTimings, request.transcriptChunkTimings)
+        XCTAssertNil(localRequest.continuationContext)
         XCTAssertTrue(localRequest.attachments.isEmpty)
         XCTAssertTrue(localRequest.conversationHistory.isEmpty)
-        XCTAssertFalse(localRequest.screenContext.hasScreenContext)
-        XCTAssertNil(localRequest.screenContext.screenText)
+        XCTAssertTrue(localRequest.screenContext.hasScreenContext)
+        XCTAssertEqual(localRequest.screenContext.screenText, "screen text")
+        XCTAssertEqual(localRequest.screenContext.screenDescription, "screen description")
         XCTAssertNil(localRequest.clipboardText)
         XCTAssertEqual(localRequest.myElsonMarkdown, "")
         XCTAssertEqual(localRequest.transcriptAgentPrompt, "")
     }
 
-    func testLocalTranscriptEnhancerPromptIsShortAndTranscriptOnly() {
-        let prompt = LocalTranscriptEnhancerPromptBuilder.transcriptEnhancerPrompt(transcript: "  Hallo Welt  ")
+    func testLocalTranscriptEnhancerPromptIsShortAndPlainTextWithoutOCR() {
+        let prompt = LocalTranscriptEnhancerPromptBuilder.transcriptEnhancerPrompt(transcript: "  raw transcript  ")
 
-        XCTAssertEqual(prompt.userPrompt, "Hallo Welt")
-        XCTAssertLessThan(prompt.systemPrompt.count, 100)
-        XCTAssertFalse(prompt.systemPrompt.localizedCaseInsensitiveContains("screen"))
-        XCTAssertFalse(prompt.systemPrompt.localizedCaseInsensitiveContains("image"))
-        XCTAssertGreaterThanOrEqual(prompt.maxTokens, 180)
+        XCTAssertEqual(prompt.userPrompt, "raw transcript")
+        XCTAssertTrue(prompt.systemPrompt.localizedCaseInsensitiveContains("corrected transcript"))
+        XCTAssertFalse(prompt.userPrompt.localizedCaseInsensitiveContains("screen"))
+        XCTAssertGreaterThanOrEqual(prompt.maxTokens, 80)
+        XCTAssertLessThanOrEqual(prompt.maxTokens, 320)
+    }
+
+    func testLocalTranscriptEnhancerPromptCanCarryOCRRuntimeData() {
+        let prompt = LocalTranscriptEnhancerPromptBuilder.transcriptEnhancerPrompt(
+            transcript: "  raw transcript  ",
+            screenContext: ElsonScreenContextPayload(
+                hasScreenContext: true,
+                screenText: "visible text",
+                screenDescription: "visible layout"
+            )
+        )
+
+        XCTAssertTrue(prompt.userPrompt.contains("\"transcript\":\"raw transcript\""))
+        XCTAssertTrue(prompt.userPrompt.contains("\"screen_text\":\"visible text\""))
+        XCTAssertTrue(prompt.userPrompt.contains("\"screen_description\":\"visible layout\""))
+        XCTAssertLessThanOrEqual(prompt.maxTokens, 320)
+    }
+
+    func testDefaultLocalConfigEnablesTranscriptOCR() {
+        XCTAssertTrue(ElsonLocalConfig.default.transcriptScreenOCR)
     }
 
     func testRuntimeModeCodableRoundTrip() throws {
@@ -190,7 +254,7 @@ final class LocalProcessingModeTests: XCTestCase {
             transcriptSnippetCount: 1,
             transcriptChunkTimings: [],
             myElsonMarkdown: "memory",
-            transcriptAgentPrompt: "cloud prompt",
+            transcriptAgentPrompt: ElsonPromptCatalog.defaultTranscriptAgentPrompt,
             workingAgentPrompt: "agent prompt",
             selectionNote: "selection",
             clipboardText: "clipboard",

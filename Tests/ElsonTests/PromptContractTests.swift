@@ -52,9 +52,10 @@ final class PromptContractTests: XCTestCase {
             PromptConfig.shared.string("local_gemma_transcript_enhancer_system_prompt")
         )
         XCTAssertEqual(prompt.userPrompt, "Hallo Welt")
-        XCTAssertLessThan(prompt.systemPrompt.count, 100)
-        XCTAssertFalse(prompt.systemPrompt.localizedCaseInsensitiveContains("screen"))
-        XCTAssertFalse(prompt.systemPrompt.localizedCaseInsensitiveContains("image"))
+        XCTAssertTrue(prompt.systemPrompt.localizedCaseInsensitiveContains("screen_text"))
+        XCTAssertFalse(prompt.userPrompt.localizedCaseInsensitiveContains("screen"))
+        XCTAssertLessThanOrEqual(prompt.maxTokens, 320)
+        XCTAssertGreaterThanOrEqual(prompt.maxTokens, 80)
     }
 
     func testAPIKeyValidationMessagesLoadFromPromptConfig() {
@@ -82,6 +83,7 @@ final class PromptContractTests: XCTestCase {
             "Transcribe the audio first, then clean the transcript faithfully.",
             "Reply with exactly OK.",
             "Respond with OK.",
+            "Text Recognition:",
         ]
 
         for relativePath in checkedFiles {
@@ -135,5 +137,58 @@ final class PromptContractTests: XCTestCase {
         XCTAssertTrue(prompt.contains("current_working_agent_prompt"))
         XCTAssertTrue(prompt.contains("Too opinionated"))
         XCTAssertTrue(prompt.contains("full_agent"))
+    }
+
+    private func makeTranscriptEnvelope() -> ElsonRequestEnvelope {
+        ElsonRequestEnvelope(
+            requestId: "request",
+            threadId: "thread",
+            surface: "chat",
+            inputSource: "audio",
+            modeHint: InteractionMode.transcription.rawValue,
+            rawTranscript: "translate this screen-labelled product name",
+            enhancedTranscript: "translate this screen-labelled product name",
+            transcriptSnippetCount: 2,
+            transcriptChunkTimings: [],
+            myElsonMarkdown: "## Words\n- Elson.ai",
+            transcriptAgentPrompt: ElsonPromptCatalog.defaultTranscriptAgentPrompt,
+            workingAgentPrompt: ElsonPromptCatalog.defaultWorkingAgentPrompt,
+            selectionNote: nil,
+            clipboardText: "clipboard context",
+            attachments: [
+                ElsonAttachmentPayload(
+                    kind: "image",
+                    name: "screen.jpg",
+                    mime: "image/jpeg",
+                    source: "auto",
+                    dataRef: "data:image/jpeg;base64,abc"
+                ),
+            ],
+            conversationHistory: [],
+            screenContext: ElsonScreenContextPayload(
+                hasScreenContext: true,
+                screenText: "screen text",
+                screenDescription: "screen description"
+            ),
+            timestamps: ElsonTimestampsPayload(
+                capturedAt: "2026-05-14T12:00:00Z",
+                selectionNoteAt: nil,
+                clipboardAt: nil,
+                attachmentsAt: nil
+            ),
+            appContext: ElsonAppContextPayload(
+                frontmostAppName: "Safari",
+                frontmostAppBundleId: "com.apple.Safari",
+                frontmostWindowTitle: "Example"
+            ),
+            continuationContext: nil,
+            systemContext: ElsonSystemContextPayload(
+                localDateTime: "2026-05-14 12:00:00",
+                localDate: "2026-05-14",
+                localTime: "12:00:00",
+                timezone: "Europe/Amsterdam"
+            ),
+            selectedSkill: nil
+        )
     }
 }

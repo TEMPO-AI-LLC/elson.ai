@@ -388,18 +388,13 @@ final class AppSettings {
 
     private var indicatorResetTask: Task<Void, Never>?
     private var deferredMyElsonPersistenceTask: Task<Void, Never>?
-    private var localProcessorWarmupTask: Task<Void, Never>?
-    private var didAttemptLocalProcessorWarmupThisLaunch = false
+    private var localProcessorCommandWarmupTasks: [InteractionMode: Task<Void, Never>] = [:]
     private var deferImmediateMyElsonPersistence = false
     private var isHydratingMyElsonState = false
     private var didImportWorkingDirectorySourcesThisLaunch = false
 
     private static var currentAppVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "development"
-    }
-
-    private static var localProcessorWarmupSentinelValue: String {
-        "\(LocalProcessorStatus.activeLLMModelSignature)|\(currentAppVersion)"
     }
 
     var lastTranscription: String {
@@ -1122,45 +1117,52 @@ final class AppSettings {
 
     func startLocalProcessorWarmupIfNeeded(reason: String) {
         guard runtimeMode == .local else { return }
-        guard didCompleteOnboarding, !needsInstallOnboarding else { return }
-        guard localProcessorWarmupTask == nil, !didAttemptLocalProcessorWarmupThisLaunch else { return }
-
+        UserDefaults.standard.removeObject(forKey: Keys.localProcessorWarmupInFlightModelID)
         refreshLocalProcessorStatus()
-        guard localProcessorStatus.isReady else { return }
-        if UserDefaults.standard.string(forKey: Keys.localProcessorWarmupInFlightModelID) == Self.localProcessorWarmupSentinelValue {
-            let message = "Local processor warmup crashed during the previous launch."
-            localProcessorStatus = LocalProcessorStatus.current(errorMessage: message)
-            DebugLog.runtimeError("local_processor_warmup_skipped reason=\(reason) previous_crash=true models=\(LocalProcessorStatus.activeLLMModelSignature)")
+        DebugLog.runtime("local_processor_startup_warmup_skipped reason=\(reason) policy=command_scoped")
+    }
+
+    func startLocalProcessorCommandWarmup(mode: InteractionMode, reason: String) {
+        let config = makeLocalConfig()
+        guard config.runtimeMode == .local else { return }
+        guard localProcessorCommandWarmupTasks[mode] == nil else {
+            DebugLog.runtime("local_processor_command_warmup_joined reason=\(reason) mode=\(mode.rawValue)")
             return
         }
 
-        didAttemptLocalProcessorWarmupThisLaunch = true
-        UserDefaults.standard.set(Self.localProcessorWarmupSentinelValue, forKey: Keys.localProcessorWarmupInFlightModelID)
-        DebugLog.runtime("local_processor_warmup_scheduled reason=\(reason)")
+        UserDefaults.standard.removeObject(forKey: Keys.localProcessorWarmupInFlightModelID)
+        DebugLog.runtime("local_processor_command_warmup_scheduled reason=\(reason) mode=\(mode.rawValue)")
 
-        localProcessorWarmupTask = Task { @MainActor [weak self] in
+        localProcessorCommandWarmupTasks[mode] = Task { @MainActor [weak self] in
             guard let self else { return }
+            let initialProgress: LocalProcessorProgress = {
+                if mode == .agent {
+                    return .gemmaStarting()
+                }
+                return .ocrStarting()
+            }()
             self.localProcessorStatus = LocalProcessorStatus.current(
                 isPreparing: true,
-                progress: .fluidAudioStarting()
+                progress: initialProgress
             )
 
             do {
-                self.localProcessorStatus = try await LocalProcessingRouter.warmLocalProcessor { [weak self] progress in
+                self.localProcessorStatus = try await LocalProcessingRouter.warmLocalProcessorForCommand(
+                    mode: mode,
+                    config: config
+                ) { [weak self] progress in
                     self?.localProcessorStatus = LocalProcessorStatus.current(
                         isPreparing: true,
                         progress: progress
                     )
                 }
-                DebugLog.runtime("local_processor_warmup_completed reason=\(reason)")
-                UserDefaults.standard.removeObject(forKey: Keys.localProcessorWarmupInFlightModelID)
+                DebugLog.runtime("local_processor_command_warmup_completed reason=\(reason) mode=\(mode.rawValue)")
             } catch {
                 self.localProcessorStatus = LocalProcessorStatus.current(errorMessage: error.localizedDescription)
-                UserDefaults.standard.removeObject(forKey: Keys.localProcessorWarmupInFlightModelID)
-                DebugLog.runtimeError("local_processor_warmup_failed reason=\(reason) error=\(error.localizedDescription)")
+                DebugLog.runtimeError("local_processor_command_warmup_failed reason=\(reason) mode=\(mode.rawValue) error=\(error.localizedDescription)")
             }
 
-            self.localProcessorWarmupTask = nil
+            self.localProcessorCommandWarmupTasks[mode] = nil
         }
     }
 
@@ -1524,9 +1526,8 @@ final class AppSettings {
         restoreOriginalClipboardAfterPasteEnabled =
             UserDefaults.standard.object(forKey: Keys.restoreOriginalClipboardAfterPasteEnabled) as? Bool
             ?? storedConfig.restoreOriginalClipboardAfterPaste
-        transcriptScreenOCREnabled =
-            UserDefaults.standard.object(forKey: Keys.transcriptScreenOCREnabled) as? Bool
-            ?? storedConfig.transcriptScreenOCR
+        transcriptScreenOCREnabled = true
+        UserDefaults.standard.set(true, forKey: Keys.transcriptScreenOCREnabled)
         fullScreenScreenshotCaptureEnabled =
             UserDefaults.standard.object(forKey: Keys.fullScreenScreenshotCaptureEnabled) as? Bool
             ?? storedConfig.fullScreenScreenshotCapture

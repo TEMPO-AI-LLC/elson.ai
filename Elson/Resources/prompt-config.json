@@ -169,10 +169,13 @@
     "{raw_transcript}"
   ],
   "local_gemma_transcript_enhancer_system_prompt": [
-    "Clean up this transcript. Preserve language and meaning. Return only the corrected text."
+    "Correct the transcript. Use screen_text only for names, terms, and visible UI context. Return corrected transcript only."
   ],
   "local_gemma_transcript_enhancer_user_prompt": [
     "{transcript}"
+  ],
+  "local_ocr_user_prompt": [
+    "Text Recognition:"
   ],
   "local_formatting_transcript_rules": [
     "Plain text only.",

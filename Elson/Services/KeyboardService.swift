@@ -323,6 +323,8 @@ final class KeyboardService {
             let microphonePermissionStartedAt = Date()
             DebugLog.requestMilestone(milestoneSnapshot, name: "shortcut_detected")
             DebugLog.requestMilestone(milestoneSnapshot, name: "microphone_permission_started")
+            let config = appSettings.makeLocalConfig()
+            appSettings.startLocalProcessorCommandWarmup(mode: mode, reason: "shortcut_detected")
 
             do {
                 try await PermissionCoordinator.ensureMicrophonePermission()
@@ -346,7 +348,6 @@ final class KeyboardService {
             self.activeChunkedSession = nil
             self.shortcutScreenContextPrefetchTask?.cancel()
             self.shortcutScreenContextPrefetchTask = nil
-            let config = appSettings.makeLocalConfig()
             let session = LocalChunkedAudioSession(
                 recordingService: recordingService,
                 groqAPIKey: config.groqAPIKey,

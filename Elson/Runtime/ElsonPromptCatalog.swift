@@ -318,6 +318,10 @@ enum ElsonPromptCatalog {
         )
     }
 
+    static func localOCRUserPrompt() -> String {
+        PromptConfig.shared.string("local_ocr_user_prompt")
+    }
+
     static func cerebrasMessages(
         systemPrompt: String,
         includeConversationHistory: Bool,

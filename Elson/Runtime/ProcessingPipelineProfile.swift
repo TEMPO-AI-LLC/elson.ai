@@ -25,7 +25,10 @@ struct ProcessingPipelineProfile: Equatable, Sendable {
     let interactionMode: InteractionMode
 
     init(config: ElsonLocalConfig, mode: InteractionMode) {
-        self.init(runtimeMode: config.runtimeMode, interactionMode: mode)
+        self.init(
+            runtimeMode: config.runtimeMode,
+            interactionMode: mode
+        )
     }
 
     init(runtimeMode: RuntimeMode, interactionMode: InteractionMode) {
@@ -36,7 +39,7 @@ struct ProcessingPipelineProfile: Equatable, Sendable {
     var shouldPrefetchScreenContext: Bool {
         switch runtimeMode {
         case .local:
-            return interactionMode == .agent
+            return interactionMode == .agent || interactionMode == .transcription
         case .hosted:
             return true
         }
@@ -51,13 +54,18 @@ struct ProcessingPipelineProfile: Equatable, Sendable {
     }
 
     var transcriptEnhancerProfileName: String {
-        shouldPassImagesToTranscriptEnhancer ? "cloud_full_context" : "local_text_only"
+        switch runtimeMode {
+        case .hosted:
+            return "cloud_full_context"
+        case .local:
+            return "local_ocr_text"
+        }
     }
 
     func shouldResolveScreenContext(for stage: ProcessingPipelineStage) -> Bool {
         switch stage {
         case .transcriptEnhancer:
-            return runtimeMode == .hosted
+            return runtimeMode == .hosted || runtimeMode == .local
         case .workingAgent:
             return true
         case .shortcutPrefetch:
@@ -86,11 +94,7 @@ struct ProcessingPipelineProfile: Equatable, Sendable {
             clipboardText: nil,
             attachments: [],
             conversationHistory: [],
-            screenContext: ElsonScreenContextPayload(
-                hasScreenContext: false,
-                screenText: nil,
-                screenDescription: nil
-            ),
+            screenContext: request.screenContext,
             timestamps: request.timestamps,
             appContext: ElsonAppContextPayload(
                 frontmostAppName: nil,
