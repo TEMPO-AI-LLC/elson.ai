@@ -2,6 +2,12 @@ import SwiftUI
 
 struct InstallOnboardingArtView: View {
     let step: InstallOnboardingStep
+    let runtimeMode: RuntimeMode
+
+    init(step: InstallOnboardingStep, runtimeMode: RuntimeMode = .local) {
+        self.step = step
+        self.runtimeMode = runtimeMode
+    }
 
     var body: some View {
         switch step {
@@ -20,7 +26,11 @@ struct InstallOnboardingArtView: View {
         case .folder:
             folderArt
         case .transcriptShortcut:
-            shortcutArt(primary: .orange, secondary: .white.opacity(0.24))
+            if runtimeMode == .local {
+                LocalGestureArt()
+            } else {
+                shortcutArt(primary: .orange, secondary: .white.opacity(0.24))
+            }
         case .agentShortcut:
             shortcutArt(primary: .purple, secondary: .white.opacity(0.24))
         case .celebration:
@@ -366,6 +376,196 @@ struct InstallOnboardingArtView: View {
                     .offset(x: 78, y: 76)
             }
             .frame(width: 220, height: 220)
+        }
+    }
+}
+
+private struct LocalGestureArt: View {
+    @State private var phase: Phase = .pressForTranscript
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(Color.white.opacity(0.08))
+                .frame(width: 270, height: 132)
+                .offset(y: -8)
+
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(Color.white.opacity(0.13), lineWidth: 1)
+                .frame(width: 270, height: 132)
+                .offset(y: -8)
+
+            VStack(spacing: 14) {
+                Image(systemName: "keyboard")
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundStyle(Color.white.opacity(0.84))
+
+                HStack(spacing: 12) {
+                    animatedKeycap(
+                        symbol: "command",
+                        pressed: phase.commandPressed,
+                        accent: Color.blue,
+                        releaseLift: phase == .commandReleasedForAgent
+                    )
+
+                    Image(systemName: "plus")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(Color.white.opacity(0.68))
+                        .scaleEffect(phase.isSpeaking ? 1.08 : 1.0)
+
+                    animatedKeycap(
+                        symbol: "option",
+                        pressed: phase.optionPressed,
+                        accent: Color.orange,
+                        releaseLift: phase == .releasedForTranscript
+                    )
+                }
+
+                LocalGestureVoiceBars(active: phase.isSpeaking)
+                    .frame(height: 18)
+            }
+            .offset(y: -12)
+
+            HStack(spacing: 10) {
+                resultPill(
+                    title: "Transcript",
+                    icon: "text.bubble.fill",
+                    active: phase == .releasedForTranscript,
+                    accent: Color.blue
+                )
+                resultPill(
+                    title: "Agent",
+                    icon: "sparkles",
+                    active: phase == .commandReleasedForAgent || phase == .releasedForAgent,
+                    accent: Color.purple
+                )
+            }
+            .offset(y: 72)
+        }
+        .frame(width: 320, height: 180)
+        .task {
+            await animate()
+        }
+    }
+
+    private func animatedKeycap(symbol: String, pressed: Bool, accent: Color, releaseLift: Bool) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 28, weight: .bold))
+            .foregroundStyle(Color.white.opacity(pressed ? 0.98 : 0.86))
+            .frame(width: 62, height: 48)
+            .background(
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .fill(pressed ? accent.opacity(0.42) : Color.white.opacity(0.08))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .stroke(pressed ? accent.opacity(0.75) : Color.white.opacity(0.16), lineWidth: pressed ? 1.5 : 1)
+            )
+            .shadow(color: pressed ? accent.opacity(0.22) : Color.clear, radius: 12, y: 8)
+            .scaleEffect(pressed ? 0.94 : 1.0)
+            .offset(y: pressed ? 5 : (releaseLift ? -5 : 0))
+    }
+
+    private func resultPill(title: String, icon: String, active: Bool, accent: Color) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .semibold))
+            Text(title)
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+        }
+        .foregroundStyle(Color.white.opacity(active ? 0.96 : 0.58))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            Capsule(style: .continuous)
+                .fill(active ? accent.opacity(0.30) : Color.white.opacity(0.08))
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .stroke(active ? accent.opacity(0.55) : Color.white.opacity(0.08), lineWidth: 1)
+        )
+        .scaleEffect(active ? 1.04 : 1.0)
+    }
+
+    @MainActor
+    private func animate() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: phase.durationNanoseconds)
+            guard !Task.isCancelled else { return }
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
+                phase = phase.next
+            }
+        }
+    }
+
+    private enum Phase: Int, CaseIterable {
+        case pressForTranscript
+        case speakForTranscript
+        case releasedForTranscript
+        case pressForAgent
+        case speakForAgent
+        case commandReleasedForAgent
+        case releasedForAgent
+
+        var next: Phase {
+            let phases = Self.allCases
+            let nextIndex = (rawValue + 1) % phases.count
+            return phases[nextIndex]
+        }
+
+        var commandPressed: Bool {
+            switch self {
+            case .pressForTranscript, .speakForTranscript, .pressForAgent, .speakForAgent:
+                return true
+            case .releasedForTranscript, .commandReleasedForAgent, .releasedForAgent:
+                return false
+            }
+        }
+
+        var optionPressed: Bool {
+            switch self {
+            case .pressForTranscript, .speakForTranscript, .pressForAgent, .speakForAgent, .commandReleasedForAgent:
+                return true
+            case .releasedForTranscript, .releasedForAgent:
+                return false
+            }
+        }
+
+        var isSpeaking: Bool {
+            self == .speakForTranscript || self == .speakForAgent
+        }
+
+        var durationNanoseconds: UInt64 {
+            switch self {
+            case .speakForTranscript, .speakForAgent:
+                return 1_050_000_000
+            case .releasedForTranscript, .commandReleasedForAgent, .releasedForAgent:
+                return 760_000_000
+            case .pressForTranscript, .pressForAgent:
+                return 560_000_000
+            }
+        }
+    }
+}
+
+private struct LocalGestureVoiceBars: View {
+    let active: Bool
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let t = timeline.date.timeIntervalSinceReferenceDate
+
+            HStack(spacing: 4) {
+                ForEach(0..<5, id: \.self) { index in
+                    let wave = abs(sin((t * 6.0) + Double(index) * 0.7))
+                    let height = active ? 5 + (wave * 15) : 4
+
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(Color.white.opacity(active ? 0.84 : 0.24))
+                        .frame(width: 4, height: height)
+                }
+            }
+            .animation(.easeInOut(duration: 0.18), value: active)
         }
     }
 }

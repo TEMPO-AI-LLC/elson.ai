@@ -359,10 +359,6 @@ enum ElsonPromptCatalog {
         )
     }
 
-    static func localOCRUserPrompt() -> String {
-        PromptConfig.shared.string("local_ocr_user_prompt")
-    }
-
     static func cerebrasMessages(
         systemPrompt: String,
         includeConversationHistory: Bool,
@@ -408,13 +404,15 @@ enum ElsonPromptCatalog {
         var lines = [PromptConfig.shared.string("transcript_chunk_timing_header")]
         for (position, timing) in sortedTimings.enumerated() {
             let snippet = timing.transcriptSnippetIndex.map { "snippet \($0 + 1)" } ?? "no transcript snippet"
+            let phaseText = timing.phase?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let phase = phaseText.isEmpty ? "transcript" : phaseText
             let overlap = timing.overlapStartSeconds.flatMap { start in
                 timing.overlapEndSeconds.map { end in
                     secondsRange(start, end)
                 }
             } ?? "None"
             lines.append(
-                "- chunk \(timing.index + 1), \(snippet): audio=\(secondsRange(timing.audioStartSeconds, timing.audioEndSeconds)); asr_payload=\(secondsRange(timing.asrPayloadStartSeconds, timing.asrPayloadEndSeconds)); overlap_context=\(overlap); kept_transcript_audio=\(secondsRange(timing.keptTranscriptStartSeconds, timing.keptTranscriptEndSeconds))"
+                "- chunk \(timing.index + 1), phase=\(phase), \(snippet): audio=\(secondsRange(timing.audioStartSeconds, timing.audioEndSeconds)); asr_payload=\(secondsRange(timing.asrPayloadStartSeconds, timing.asrPayloadEndSeconds)); overlap_context=\(overlap); kept_transcript_audio=\(secondsRange(timing.keptTranscriptStartSeconds, timing.keptTranscriptEndSeconds))"
             )
             if timing.overlapDurationSeconds > 0, position > 0 {
                 let previous = sortedTimings[position - 1]
@@ -485,14 +483,6 @@ enum ElsonPromptCatalog {
     private static func localTranscriptEnhancerReplacements(_ envelope: ElsonRequestEnvelope) -> [String: String] {
         [
             "raw_transcript": nonEmptyOrPlaceholder(envelope.rawTranscript ?? envelope.enhancedTranscript),
-            "transcript_snippet_count": envelope.transcriptSnippetCount.map { String($0) } ?? "None",
-            "transcript_chunk_timing": transcriptChunkTimingText(envelope.transcriptChunkTimings),
-            "local_date_time": envelope.systemContext.localDateTime,
-            "local_date": envelope.systemContext.localDate,
-            "local_time": envelope.systemContext.localTime,
-            "timezone": envelope.systemContext.timezone,
-            "words_glossary": wordsGlossaryText(from: envelope.myElsonMarkdown),
-            "screen_text": nonEmptyOrPlaceholder(envelope.screenContext.screenText),
         ]
     }
 
@@ -501,6 +491,8 @@ enum ElsonPromptCatalog {
         attachmentSummary: String
     ) -> [String: String] {
         [
+            "transcript_context": nonEmptyOrPlaceholder(envelope.transcriptContext),
+            "agent_intent_transcript": nonEmptyOrPlaceholder(envelope.agentIntentTranscript ?? envelope.rawTranscript),
             "raw_transcript": nonEmptyOrPlaceholder(envelope.rawTranscript),
             "transcript_snippet_count": envelope.transcriptSnippetCount.map { String($0) } ?? "None",
             "transcript_chunk_timing": transcriptChunkTimingText(envelope.transcriptChunkTimings),

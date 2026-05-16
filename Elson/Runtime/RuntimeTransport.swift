@@ -137,6 +137,7 @@ struct ElsonConversationTurnPayload: Codable, Hashable, Sendable {
 
 struct ElsonTranscriptChunkTimingPayload: Codable, Hashable, Sendable {
     let index: Int
+    var phase: String? = nil
     let transcriptSnippetIndex: Int?
     let audioStartSeconds: Double
     let audioEndSeconds: Double
@@ -150,6 +151,7 @@ struct ElsonTranscriptChunkTimingPayload: Codable, Hashable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case index
+        case phase
         case transcriptSnippetIndex = "transcript_snippet_index"
         case audioStartSeconds = "audio_start_seconds"
         case audioEndSeconds = "audio_end_seconds"
@@ -173,6 +175,8 @@ struct ElsonRequestEnvelope: Codable, Hashable, Sendable {
     let enhancedTranscript: String
     let transcriptSnippetCount: Int?
     let transcriptChunkTimings: [ElsonTranscriptChunkTimingPayload]
+    var transcriptContext: String? = nil
+    var agentIntentTranscript: String? = nil
     let myElsonMarkdown: String
     let transcriptAgentPrompt: String
     let workingAgentPrompt: String
@@ -197,6 +201,8 @@ struct ElsonRequestEnvelope: Codable, Hashable, Sendable {
         case enhancedTranscript = "enhanced_transcript"
         case transcriptSnippetCount = "transcript_snippet_count"
         case transcriptChunkTimings = "transcript_chunk_timings"
+        case transcriptContext = "transcript_context"
+        case agentIntentTranscript = "agent_intent_transcript"
         case myElsonMarkdown = "my_elson_markdown"
         case transcriptAgentPrompt = "transcript_agent_prompt"
         case workingAgentPrompt = "working_agent_prompt"

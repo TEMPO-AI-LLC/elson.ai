@@ -169,7 +169,7 @@ struct InstallOnboardingView: View {
             if currentStep == .celebration {
                 readyContent
             } else {
-                InstallOnboardingArtView(step: currentStep)
+                InstallOnboardingArtView(step: currentStep, runtimeMode: appSettings.runtimeMode)
                     .frame(height: currentStep == .apiKeys ? 118 : 180)
 
                 VStack(spacing: currentStep == .apiKeys ? 5 : 8) {
@@ -345,9 +345,6 @@ struct InstallOnboardingView: View {
                     Label("FluidAudio v3", systemImage: appSettings.localProcessorStatus.fluidAudioReady ? "checkmark.circle.fill" : "arrow.down.circle")
                     Label(LocalProcessorStatus.sharedGemmaDisplayName, systemImage: appSettings.localProcessorStatus.gemmaReady ? "checkmark.circle.fill" : "arrow.down.circle")
                 }
-                HStack(spacing: 8) {
-                    Label(LocalProcessorStatus.ocrScreenTextDisplayName, systemImage: appSettings.localProcessorStatus.ocrReady ? "checkmark.circle.fill" : "arrow.down.circle")
-                }
             }
             .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(secondaryTextColor)
@@ -504,7 +501,18 @@ struct InstallOnboardingView: View {
         @Bindable var appSettings = appSettings
 
         return VStack(spacing: 14) {
-            RecordingShortcutCaptureButton(shortcut: $appSettings.transcriptShortcut)
+            if appSettings.runtimeMode == .local {
+                HStack(spacing: 6) {
+                    ForEach(RecordingShortcut.localDualPhaseDefault.symbolTokens, id: \.self) { token in
+                        Text(token)
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                            .frame(minWidth: 34, minHeight: 30)
+                            .background(cardChromeColor, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                }
+            } else {
+                RecordingShortcutCaptureButton(shortcut: $appSettings.transcriptShortcut)
+            }
         }
     }
 
@@ -512,9 +520,20 @@ struct InstallOnboardingView: View {
         @Bindable var appSettings = appSettings
 
         return VStack(spacing: 14) {
-            RecordingShortcutCaptureButton(shortcut: $appSettings.agentShortcut)
+            if appSettings.runtimeMode == .local {
+                HStack(spacing: 6) {
+                    ForEach(RecordingShortcut.localDualPhaseDefault.symbolTokens, id: \.self) { token in
+                        Text(token)
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                            .frame(minWidth: 34, minHeight: 30)
+                            .background(cardChromeColor, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                }
+            } else {
+                RecordingShortcutCaptureButton(shortcut: $appSettings.agentShortcut)
+            }
 
-            if appSettings.hasShortcutConflict {
+            if appSettings.runtimeMode == .hosted, appSettings.hasShortcutConflict {
                 Text("Agent shortcut must differ from the transcript shortcut.")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(secondaryTextColor)
@@ -524,7 +543,7 @@ struct InstallOnboardingView: View {
 
     private var progressDots: some View {
         HStack(spacing: 10) {
-            ForEach(Array(InstallOnboardingStep.allCases.enumerated()), id: \.offset) { index, step in
+            ForEach(Array(InstallOnboardingStep.visibleSteps(for: appSettings.runtimeMode).enumerated()), id: \.offset) { index, step in
                 Circle()
                     .fill(progressColor(for: step, index: index))
                     .frame(width: 9, height: 9)
@@ -654,6 +673,9 @@ struct InstallOnboardingView: View {
         case .folder:
             return "Documents"
         case .transcriptShortcut:
+            if appSettings.runtimeMode == .local {
+                return "Local Gesture"
+            }
             return "Transcript"
         case .agentShortcut:
             return "Agent"
@@ -667,7 +689,7 @@ struct InstallOnboardingView: View {
         case .interactionModel:
             return "Choose the right shortcut for the job."
         case .apiKeys:
-            return appSettings.runtimeMode == .local ? "Use on-device speech, OCR, and Gemma." : "Use Groq, Cerebras, and Gemini."
+            return appSettings.runtimeMode == .local ? "Use on-device speech and Gemma." : "Use Groq, Cerebras, and Gemini."
         case .microphone:
             return "Mic so Elson understands you."
         case .screen:
@@ -683,6 +705,9 @@ struct InstallOnboardingView: View {
             }
             return "Allow Elson to use \(path) for MyElson context and daily transcript CSV exports. You can choose a different folder later in Settings."
         case .transcriptShortcut:
+            if appSettings.runtimeMode == .local {
+                return "Press both, speak. Release both for Transcript. Release command first for Agent."
+            }
             return "For text."
         case .agentShortcut:
             return "For Elson."
@@ -731,6 +756,7 @@ struct InstallOnboardingView: View {
                 && !trimmedSecret(geminiDraftKey).isEmpty
                 && !isWorking
         case .transcriptShortcut, .agentShortcut:
+            if appSettings.runtimeMode == .local { return true }
             return !appSettings.hasShortcutConflict
         case .celebration:
             return appSettings.hasCompletedRequiredInstallSetup
@@ -831,9 +857,18 @@ struct InstallOnboardingView: View {
             }
         case .transcriptShortcut:
             appSettings.didCompleteTranscriptShortcutOnboarding = true
+            if appSettings.runtimeMode == .local {
+                appSettings.didCompleteAgentShortcutOnboarding = true
+            }
             appSettings.refreshOnboardingStoredFlag()
             syncCurrentStep(force: false)
         case .agentShortcut:
+            if appSettings.runtimeMode == .local {
+                appSettings.didCompleteAgentShortcutOnboarding = true
+                appSettings.refreshOnboardingStoredFlag()
+                syncCurrentStep(force: false)
+                return
+            }
             if appSettings.hasShortcutConflict {
                 statusText = "Transcript and Agent shortcuts must differ."
                 return

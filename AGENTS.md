@@ -3,7 +3,7 @@
 - Install/register the fresh `Elson.app` before calling `tccutil`, because `tccutil` only resets a bundle id that macOS can currently resolve.
 - Reset `All`, `ScreenCapture`, `Microphone`, `Accessibility`, `SystemPolicyDocumentsFolder`, `SystemPolicyDesktopFolder`, `SystemPolicyDownloadsFolder`, and `SystemPolicyAllFiles` for `ai.elson.desktop`.
 - App release versions must monotonically increase; bump `CFBundleShortVersionString` and `CFBundleVersion` before rebuild/install.
-- `./build.sh` is the canonical rebuild path: it must clean installed Elson app/state plus `~/Documents/Elson/Config/local-config.json`, reset TCC, install/open the fresh app, and preserve repo `.env.local`; never copy `.env.local` values into app config.
+- `./build.sh` is the canonical rebuild path: it must clean installed Elson app/state plus `~/Documents/Elson/Config/local-config.json`, reset TCC, install/open the fresh app, and preserve repo `.env.local`, local model caches, logs, transcript/chat history, captured sessions, and eval fixtures; never copy `.env.local` values into app config.
 - `./update.sh` is the preserve-state update path: it must replace the installed app, reset TCC, and keep local config, API keys, history, and local app state.
 - `update` always means preserve local config. `rebuild` / `build.sh` always means full reset.
 - Only open Elson after that reset sequence; if System Settings is already open, close and reopen the Privacy pane to avoid stale cached UI.
@@ -11,6 +11,7 @@
 - Never use raw workspace paths for onboarding or transcript export; keep all workspace file access behind `withSelectedWorkspaceFolderAccess()`.
 - Keep descriptions and helper copy minimal; omit them unless they prevent confusion.
 - Always commit before prompt edits, and every prompt edit must be followed by at least one eval run against the CSV-backed intent cases so routing changes stay comparable.
+- Append failed Local Agent eval seeds to `evals_python/fixtures/local-agent/local_agent_cases.csv` as one CSV row per case; do not run that lane unless explicitly requested.
 - All LLM prompts, system messages, user messages, and provider message templates must live in `Elson/Resources/prompt-config.json`.
 - Swift code may load prompt keys and inject runtime data, but must not add hardcoded LLM prompt instructions in runtime or service code.
 - New Local/Cloud prompt variants must be represented as separate prompt-config keys, not inline strings.

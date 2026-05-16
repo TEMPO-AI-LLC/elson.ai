@@ -1,0 +1,64 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:elson.ai}",
+            "name": "Debug Elson",
+            "target": "Elson",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug Elson"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:elson.ai}",
+            "name": "Release Elson",
+            "target": "Elson",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release Elson"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:elson.ai}",
+            "name": "Debug GemmaTextSmoke",
+            "target": "GemmaTextSmoke",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug GemmaTextSmoke"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:elson.ai}",
+            "name": "Release GemmaTextSmoke",
+            "target": "GemmaTextSmoke",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release GemmaTextSmoke"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:elson.ai}",
+            "name": "Debug GemmaImageSmoke",
+            "target": "GemmaImageSmoke",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug GemmaImageSmoke"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:elson.ai}",
+            "name": "Release GemmaImageSmoke",
+            "target": "GemmaImageSmoke",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release GemmaImageSmoke"
+        }
+    ]
+}

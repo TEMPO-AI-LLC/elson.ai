@@ -31,7 +31,7 @@ final class KeyboardService {
         let requestId: String
         let requestStartedAt: Date
         let audioCaptureDurationMS: Int
-        let session: LocalChunkedAudioSession
+        let session: HostedChunkedAudioSession
         let destination: ShortcutDestination
         let threadId: String
         let optimisticMessageId: UUID
@@ -60,7 +60,8 @@ final class KeyboardService {
     @ObservationIgnored private var armedToggleStop = false
     @ObservationIgnored private var activeRecordingShortcut: RecordingShortcut? = nil
     @ObservationIgnored private var activeShortcutDestination: ShortcutDestination? = nil
-    @ObservationIgnored private var activeChunkedSession: LocalChunkedAudioSession? = nil
+    @ObservationIgnored private var activeChunkedSession: HostedChunkedAudioSession? = nil
+    @ObservationIgnored private var activeLocalVoiceSession: LocalVoiceCaptureSession? = nil
     @ObservationIgnored private var activeShortcutThreadId: String? = nil
     @ObservationIgnored private var activeShortcutPreviousThreadId: String? = nil
     @ObservationIgnored private var activeShortcutLatencyState: ShortcutLatencyState? = nil
@@ -69,6 +70,9 @@ final class KeyboardService {
     @ObservationIgnored private var shortcutProcessingQueue: [ShortcutProcessingJob] = []
     @ObservationIgnored private var isShortcutProcessingQueueRunning = false
     @ObservationIgnored private var shortcutScreenContextPrefetchTask: Task<(context: LocalScreenContext, durationMS: Int)?, Never>?
+    @ObservationIgnored private var localDualPhaseAgentIntentActive = false
+    @ObservationIgnored private var localDualPhaseAgentActivationTask: Task<Void, Never>?
+    @ObservationIgnored private let localDualPhaseAgentGraceNanoseconds: UInt64 = 180_000_000
 
     func setup(with appSettings: AppSettings, recordingService: AudioRecordingService, chatStore: ChatStore) {
         self.appSettings = appSettings
@@ -95,10 +99,21 @@ final class KeyboardService {
             armedToggleStop = false
             return
         }
-        guard !appSettings.hasShortcutConflict else {
+        guard appSettings.runtimeMode == .local || !appSettings.hasShortcutConflict else {
             lastTranscriptShortcutActive = false
             lastAgentShortcutActive = false
             armedToggleStop = false
+            return
+        }
+
+        if appSettings.runtimeMode == .local {
+            handleLocalDualPhaseShortcut(
+                appSettings: appSettings,
+                recordingService: recordingService,
+                chatStore: chatStore
+            )
+            lastTranscriptShortcutActive = false
+            lastAgentShortcutActive = false
             return
         }
 
@@ -161,7 +176,7 @@ final class KeyboardService {
 
     private func handleGlobalEscape(_ event: NSEvent) -> Bool {
         guard event.keyCode == 53 else { return false }
-        guard activeChunkedSession != nil else { return false }
+        guard activeChunkedSession != nil || activeLocalVoiceSession != nil else { return false }
 
         Task { @MainActor [weak self] in
             await self?.cancelActiveShortcutRecording(reason: "escape")
@@ -186,6 +201,104 @@ final class KeyboardService {
         }
 
         return true
+    }
+
+    private func currentShortcutModifierSet() -> Set<ShortcutModifier> {
+        Set(RecordingShortcut.from(carbonModifiers: GetCurrentKeyModifiers()).modifiers)
+    }
+
+    private func handleLocalDualPhaseShortcut(
+        appSettings: AppSettings,
+        recordingService: AudioRecordingService,
+        chatStore: ChatStore
+    ) {
+        let modifiers = currentShortcutModifierSet()
+        let commandDown = modifiers.contains(.command)
+        let optionDown = modifiers.contains(.option)
+        let dualPhaseDown = commandDown && optionDown
+
+        let localRecordingActive = activeLocalVoiceSession?.isRecording == true
+        guard localRecordingActive else {
+            if dualPhaseDown {
+                localDualPhaseAgentIntentActive = false
+                localDualPhaseAgentActivationTask?.cancel()
+                localDualPhaseAgentActivationTask = nil
+                beginShortcutRecording(
+                    mode: .transcription,
+                    shortcut: .localDualPhaseDefault,
+                    triggeredAt: Date(),
+                    appSettings: appSettings,
+                    recordingService: recordingService,
+                    chatStore: chatStore
+                )
+            } else if !optionDown && !commandDown {
+                localDualPhaseAgentIntentActive = false
+                localDualPhaseAgentActivationTask?.cancel()
+                localDualPhaseAgentActivationTask = nil
+            }
+            return
+        }
+
+        guard activeRecordingShortcut == .localDualPhaseDefault else { return }
+
+        if dualPhaseDown {
+            localDualPhaseAgentActivationTask?.cancel()
+            localDualPhaseAgentActivationTask = nil
+            return
+        }
+
+        if optionDown, !commandDown {
+            guard !localDualPhaseAgentIntentActive, localDualPhaseAgentActivationTask == nil else { return }
+            localDualPhaseAgentActivationTask = Task { @MainActor [weak self, weak appSettings, weak chatStore] in
+                try? await Task.sleep(nanoseconds: self?.localDualPhaseAgentGraceNanoseconds ?? 180_000_000)
+                guard let self, let appSettings, let chatStore else { return }
+                guard !Task.isCancelled else { return }
+                let current = self.currentShortcutModifierSet()
+                guard current.contains(.option), !current.contains(.command) else {
+                    self.localDualPhaseAgentActivationTask = nil
+                    return
+                }
+                self.activateLocalDualPhaseAgentIntent(appSettings: appSettings, chatStore: chatStore)
+            }
+            return
+        }
+
+        localDualPhaseAgentActivationTask?.cancel()
+        localDualPhaseAgentActivationTask = nil
+        finishShortcutRecording(appSettings: appSettings, recordingService: recordingService, chatStore: chatStore)
+    }
+
+    private func activateLocalDualPhaseAgentIntent(appSettings: AppSettings, chatStore: ChatStore) {
+        guard !localDualPhaseAgentIntentActive else { return }
+        guard let threadId = activeShortcutThreadId ?? activeShortcutDestination?.threadId else { return }
+
+        if let localSession = activeLocalVoiceSession {
+            do {
+                try localSession.activateAgentIntentPhase()
+            } catch {
+                DebugLog.runtimeError("local_voice_agent_phase_failed thread_id=\(threadId) error=\(error.localizedDescription)")
+                appSettings.indicatorState = .error
+                return
+            }
+        } else {
+            guard let session = activeChunkedSession else { return }
+            session.markAgentIntentPhaseStarted()
+        }
+        activeShortcutDestination = .runtime(mode: .agent, threadId: threadId)
+        localDualPhaseAgentIntentActive = true
+        localDualPhaseAgentActivationTask = nil
+        appSettings.startLocalProcessorCommandWarmup(mode: .agent, reason: "local_dual_phase_agent_intent")
+        ThreadModeStore.set(threadId: threadId, target: .agent)
+        if chatStore.thread.id == threadId {
+            chatStore.beginRun(threadId: threadId, mode: .agent, optimisticUserMessageId: nil)
+        }
+        DebugLog.runtime("local_dual_phase_agent_intent_activated thread_id=\(threadId)")
+    }
+
+    private func resetLocalDualPhaseState() {
+        localDualPhaseAgentActivationTask?.cancel()
+        localDualPhaseAgentActivationTask = nil
+        localDualPhaseAgentIntentActive = false
     }
 
     private func isActiveRecordingShortcutStillPressed(appSettings: AppSettings) -> Bool {
@@ -292,6 +405,16 @@ final class KeyboardService {
         recordingService: AudioRecordingService,
         chatStore: ChatStore
     ) {
+        if appSettings.runtimeMode == .local {
+            beginLocalVoiceRecording(
+                shortcut: shortcut,
+                triggeredAt: triggeredAt,
+                appSettings: appSettings,
+                chatStore: chatStore
+            )
+            return
+        }
+
         guard !recordingService.isRecording, !shortcutCaptureInFlight else {
             DebugLog.runtime("shortcut_recording_start_ignored reason=capture_active")
             NotificationHelper.showNotification(
@@ -348,7 +471,7 @@ final class KeyboardService {
             self.activeChunkedSession = nil
             self.shortcutScreenContextPrefetchTask?.cancel()
             self.shortcutScreenContextPrefetchTask = nil
-            let session = LocalChunkedAudioSession(
+            let session = HostedChunkedAudioSession(
                 recordingService: recordingService,
                 groqAPIKey: config.groqAPIKey,
                 modeHint: mode,
@@ -417,6 +540,176 @@ final class KeyboardService {
         }
     }
 
+    private func beginLocalVoiceRecording(
+        shortcut: RecordingShortcut,
+        triggeredAt: Date,
+        appSettings: AppSettings,
+        chatStore: ChatStore
+    ) {
+        guard activeLocalVoiceSession == nil, !shortcutCaptureInFlight else {
+            DebugLog.runtime("local_voice_recording_start_ignored reason=capture_active")
+            NotificationHelper.showNotification(
+                title: "Elson.ai",
+                body: "Recording is already active.",
+                sound: nil
+            )
+            return
+        }
+        shortcutCaptureInFlight = true
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let requestId = UUID().uuidString
+            let targetThreadId = self.provisionalShortcutThreadId(currentThreadId: chatStore.thread.id)
+            let milestoneSnapshot = RequestTimelineSnapshot(
+                requestId: requestId,
+                threadId: targetThreadId,
+                surface: "shortcut",
+                inputSource: "audio"
+            )
+            let microphonePermissionStartedAt = Date()
+            DebugLog.requestMilestone(milestoneSnapshot, name: "shortcut_detected")
+            if !PermissionCoordinator.hasMicrophonePermission() {
+                DebugLog.requestMilestone(milestoneSnapshot, name: "microphone_permission_started")
+                do {
+                    try await PermissionCoordinator.ensureMicrophonePermission()
+                } catch {
+                    self.shortcutCaptureInFlight = false
+                    self.presentShortcutStartFailure(
+                        error.localizedDescription,
+                        appSettings: appSettings,
+                        chatStore: chatStore
+                    )
+                    return
+                }
+                DebugLog.requestMilestone(milestoneSnapshot, name: "microphone_permission_granted")
+            }
+            let microphonePermissionGrantedAt = Date()
+
+            if appSettings.listeningMode == .hold, !self.isShortcutActive(shortcut) {
+                self.shortcutCaptureInFlight = false
+                return
+            }
+
+            let session = LocalVoiceCaptureSession(
+                requestId: requestId,
+                threadId: targetThreadId
+            )
+            do {
+                try session.start()
+            } catch {
+                self.shortcutCaptureInFlight = false
+                self.presentShortcutStartFailure(
+                    error.localizedDescription,
+                    appSettings: appSettings,
+                    chatStore: chatStore
+                )
+                return
+            }
+
+            self.activeChunkedSession = nil
+            self.shortcutScreenContextPrefetchTask?.cancel()
+            self.shortcutScreenContextPrefetchTask = nil
+            self.activeLocalVoiceSession = session
+            self.activeShortcutDestination = .runtime(mode: .transcription, threadId: targetThreadId)
+            self.activeRecordingShortcut = shortcut
+            self.shortcutRunScreenshotJPEGData = []
+            self.shortcutCaptureInFlight = false
+            self.activeShortcutThreadId = targetThreadId
+            self.activeShortcutPreviousThreadId = chatStore.thread.id
+            self.activeShortcutLatencyState = ShortcutLatencyState(
+                requestId: requestId,
+                shortcutDetectedAt: triggeredAt,
+                microphonePermissionStartedAt: microphonePermissionStartedAt,
+                microphonePermissionGrantedAt: microphonePermissionGrantedAt,
+                recordingStartedAt: session.activeRecordingStartedAt ?? Date()
+            )
+
+            appSettings.isRecording = true
+            appSettings.indicatorState = .listening
+            chatStore.setThread(id: targetThreadId, messages: [])
+            ThreadModeStore.set(threadId: targetThreadId, target: .transcript)
+            NotificationCenter.default.post(name: .bringBubbleToFront, object: nil)
+            DebugLog.requestMilestone(milestoneSnapshot, name: "recording_started")
+            appSettings.startLocalProcessorCommandWarmup(mode: .transcription, reason: "recording_started")
+        }
+    }
+
+    private func finishLocalVoiceRecording(appSettings: AppSettings, chatStore: ChatStore) {
+        guard let session = activeLocalVoiceSession else { return }
+        let targetThreadId = activeShortcutThreadId ?? session.threadId
+        let latencyState = activeShortcutLatencyState
+        let pendingAttachments = appSettings.pendingAttachments
+        let clipboardText = ClipboardHelper.getClipboardContent()
+        let shouldCaptureScreenshot = session.mode == .agent
+
+        appSettings.isRecording = false
+        activeLocalVoiceSession = nil
+        activeShortcutDestination = nil
+        activeRecordingShortcut = nil
+        activeShortcutThreadId = nil
+        activeShortcutLatencyState = nil
+        localDualPhaseAgentActivationTask?.cancel()
+        localDualPhaseAgentActivationTask = nil
+        localDualPhaseAgentIntentActive = false
+        shortcutRunScreenshotJPEGData = []
+        shortcutScreenContextPrefetchTask?.cancel()
+        shortcutScreenContextPrefetchTask = nil
+        shortcutCaptureInFlight = false
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let latencyContext = LocalVoiceLatencyContext(
+                    shortcutDetectedAt: latencyState?.shortcutDetectedAt,
+                    microphonePermissionStartedAt: latencyState?.microphonePermissionStartedAt,
+                    microphonePermissionGrantedAt: latencyState?.microphonePermissionGrantedAt,
+                    recordingStartedAt: latencyState?.recordingStartedAt
+                )
+                let run = try session.stop(
+                    minimumDuration: self.minimumShortcutRecordingDuration,
+                    latencyContext: latencyContext
+                )
+                let screenshotTask: Task<[Data], Never>? = if shouldCaptureScreenshot {
+                    Task { @MainActor [weak self] in
+                        guard let self,
+                              let captured = try? await self.captureScreenshotDataIfPossible(fullScreen: true)
+                        else {
+                            return []
+                        }
+                        return [captured]
+                    }
+                } else {
+                    nil
+                }
+                appSettings.indicatorState = run.isAgentRun ? .agentProcessing : .processing
+                LocalVoiceRunCoordinator.shared.processCapturedRun(
+                    run,
+                    appSettings: appSettings,
+                    chatStore: chatStore,
+                    config: appSettings.makeLocalConfig(),
+                    pendingAttachments: run.isAgentRun ? pendingAttachments : [],
+                    clipboardText: run.isAgentRun ? clipboardText : nil,
+                    screenshotJPEGData: [],
+                    screenshotJPEGDataTask: screenshotTask,
+                    source: "shortcut"
+                )
+                self.activeShortcutPreviousThreadId = nil
+            } catch {
+                DebugLog.runtimeError(
+                    "local_voice_recording_finish_failed thread_id=\(targetThreadId) error=\(error.localizedDescription)"
+                )
+                self.restorePriorThreadIfNeeded(chatStore: chatStore)
+                appSettings.indicatorState = .error
+                NotificationHelper.showNotification(
+                    title: "Elson.ai",
+                    body: self.userFacingShortcutErrorMessage(error.localizedDescription),
+                    sound: .default
+                )
+            }
+        }
+    }
+
     private func presentShortcutStartFailure(_ message: String, appSettings: AppSettings, chatStore: ChatStore) {
         let friendlyMessage = userFacingShortcutErrorMessage(message)
         appSettings.indicatorState = .error
@@ -429,6 +722,11 @@ final class KeyboardService {
     }
 
     private func finishShortcutRecording(appSettings: AppSettings, recordingService: AudioRecordingService, chatStore: ChatStore) {
+        if activeLocalVoiceSession != nil {
+            finishLocalVoiceRecording(appSettings: appSettings, chatStore: chatStore)
+            return
+        }
+
         guard let destination = activeShortcutDestination else { return }
         guard let session = activeChunkedSession else {
             appSettings.isRecording = false
@@ -437,6 +735,7 @@ final class KeyboardService {
             activeShortcutLatencyState = nil
             shortcutRunScreenshotJPEGData = []
             shortcutCaptureInFlight = false
+            resetLocalDualPhaseState()
             appSettings.indicatorState = .error
             NotificationHelper.showNotification(
                 title: "Elson.ai",
@@ -448,6 +747,9 @@ final class KeyboardService {
         appSettings.isRecording = false
         activeShortcutDestination = nil
         activeRecordingShortcut = nil
+        localDualPhaseAgentActivationTask?.cancel()
+        localDualPhaseAgentActivationTask = nil
+        localDualPhaseAgentIntentActive = false
 
         let threadId = destination.threadId
         let optimisticMessageId = UUID()
@@ -632,10 +934,15 @@ final class KeyboardService {
                 guard let self else { return (job.screenshotData, nil) }
                 let mode = job.runtimeMode ?? .transcription
                 let processingProfile = LocalProcessingRouter.contextProfile(for: job.config, mode: mode)
-                guard processingProfile.shouldPrefetchScreenContext else {
-                    return ([], nil)
-                }
                 var screenshotData = job.screenshotData
+                let requiresLocalAgentScreenshot = job.config.runtimeMode == .local && mode == .agent
+                if screenshotData.isEmpty, requiresLocalAgentScreenshot,
+                   let captured = try? await self.captureScreenshotDataIfPossible(fullScreen: true) {
+                    screenshotData = [captured]
+                }
+                guard processingProfile.shouldPrefetchScreenContext else {
+                    return (screenshotData, nil)
+                }
                 if screenshotData.isEmpty, let captured = try? await self.captureScreenshotDataIfPossible() {
                     screenshotData = [captured]
                 }
@@ -707,9 +1014,12 @@ final class KeyboardService {
                     countTowardProvider: true
                 )
             }
+            let isLocalAgentRun = job.config.runtimeMode == .local && job.runtimeMode == .agent
             let result = try await ElsonRuntime.shared.processAudioTranscriptWithRetry(
                 requestId: job.requestId,
                 rawTranscript: audioDraft.rawTranscript,
+                transcriptContext: isLocalAgentRun ? audioDraft.transcriptRawText : nil,
+                agentIntentTranscript: isLocalAgentRun ? audioDraft.agentIntentRawText : nil,
                 snippetCount: audioDraft.snippetCount,
                 transcriptChunkTimings: audioDraft.transcriptChunkTimings,
                 mode: job.runtimeMode ?? .transcription,
@@ -1004,9 +1314,9 @@ final class KeyboardService {
             .contains("no speech detected")
     }
 
-    private func captureScreenshotDataIfPossible() async throws -> Data {
-        let maxPixelSize = appSettings?.screenshotCaptureMaxPixelSize ?? 300
-        let cropRadius = appSettings?.screenshotCaptureCropAroundMousePixelRadius ?? 150
+    private func captureScreenshotDataIfPossible(fullScreen: Bool = false) async throws -> Data {
+        let maxPixelSize = fullScreen ? 1280 : (appSettings?.screenshotCaptureMaxPixelSize ?? 300)
+        let cropRadius = fullScreen ? nil : (appSettings?.screenshotCaptureCropAroundMousePixelRadius ?? 150)
         return try await ScreenSnapshotService.shared.captureJPEGDataIfPermitted(
             maxPixelSize: maxPixelSize,
             quality: 0.7,
@@ -1090,11 +1400,17 @@ final class KeyboardService {
 
     private func cancelActiveShortcutRecording(reason: String) async {
         guard let appSettings, let chatStore else { return }
-        guard let session = activeChunkedSession else { return }
         let activeThreadId = activeShortcutThreadId ?? chatStore.thread.id
 
-        session.cancel()
-        activeChunkedSession = nil
+        if let localSession = activeLocalVoiceSession {
+            localSession.cancel(reason: reason)
+            activeLocalVoiceSession = nil
+        } else if let session = activeChunkedSession {
+            session.cancel()
+            activeChunkedSession = nil
+        } else {
+            return
+        }
         activeShortcutDestination = nil
         activeRecordingShortcut = nil
         activeShortcutThreadId = nil
@@ -1103,6 +1419,7 @@ final class KeyboardService {
         shortcutScreenContextPrefetchTask?.cancel()
         shortcutScreenContextPrefetchTask = nil
         shortcutCaptureInFlight = false
+        resetLocalDualPhaseState()
         appSettings.isRecording = false
         appSettings.indicatorState = .idle
         chatStore.endRun(threadId: activeThreadId)

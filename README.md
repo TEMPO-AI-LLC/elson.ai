@@ -479,7 +479,7 @@ What it does:
 - stops Elson
 - unregisters old app bundles from LaunchServices
 - removes installed copies from `/Applications` and `~/Applications`
-- removes app support / container state for a clean reinstall
+- removes resettable app support / container state for a clean reinstall while preserving logs, history, captured sessions, eval fixtures, and local model caches
 - removes the default workspace `local-config.json`
 - resets TCC for:
   - `All`

@@ -46,6 +46,12 @@ enum InstallOnboardingStep: Int, CaseIterable, Hashable {
     case transcriptShortcut
     case agentShortcut
     case celebration
+
+    static func visibleSteps(for runtimeMode: RuntimeMode) -> [InstallOnboardingStep] {
+        allCases.filter { step in
+            !(runtimeMode == .local && step == .agentShortcut)
+        }
+    }
 }
 
 @MainActor
@@ -175,7 +181,7 @@ final class AppSettings {
         }
     }
 
-    var transcriptShortcut: RecordingShortcut = .default {
+    var transcriptShortcut: RecordingShortcut = .localDualPhaseDefault {
         didSet {
             UserDefaults.standard.set(transcriptShortcut.storageValue, forKey: Keys.transcriptShortcut)
             persistLocalConfig()
@@ -189,7 +195,7 @@ final class AppSettings {
         }
     }
 
-    var recordingShortcut: RecordingShortcut = .default {
+    var recordingShortcut: RecordingShortcut = .localDualPhaseDefault {
         didSet {
             UserDefaults.standard.set(recordingShortcut.storageValue, forKey: Keys.recordingShortcut)
             persistLocalConfig()
@@ -242,7 +248,7 @@ final class AppSettings {
         }
     }
 
-    var transcriptScreenOCREnabled: Bool = true {
+    var transcriptScreenOCREnabled: Bool = false {
         didSet {
             UserDefaults.standard.set(
                 transcriptScreenOCREnabled,
@@ -621,7 +627,7 @@ final class AppSettings {
             && fullDiskAccessPermissionGranted
             && hasCompletedFolderOnboarding
             && didCompleteTranscriptShortcutOnboarding
-            && didCompleteAgentShortcutOnboarding
+            && (runtimeMode == .local || didCompleteAgentShortcutOnboarding)
     }
 
     var hasCompletedInstallOnboarding: Bool {
@@ -642,7 +648,7 @@ final class AppSettings {
         if !fullDiskAccessPermissionGranted { return .fullDiskAccess }
         if !hasCompletedFolderSetup { return .folder }
         if !didCompleteTranscriptShortcutOnboarding { return .transcriptShortcut }
-        if !didCompleteAgentShortcutOnboarding { return .agentShortcut }
+        if runtimeMode == .hosted, !didCompleteAgentShortcutOnboarding { return .agentShortcut }
         if !didCompleteOnboarding { return .celebration }
         return nil
     }
@@ -746,7 +752,12 @@ final class AppSettings {
         let rawTranscript = snapshot.rawTranscript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !rawTranscript.isEmpty { return true }
 
-        let candidatePaths = [snapshot.rawTranscriptFilePath, snapshot.audioFilePath]
+        let candidatePaths = [
+            snapshot.rawTranscriptFilePath,
+            snapshot.audioFilePath,
+            snapshot.transcriptAudioFilePath,
+            snapshot.agentIntentAudioFilePath
+        ]
             .compactMap { $0 }
             + snapshot.chunkAudioFilePaths
         return candidatePaths.contains { FileManager.default.fileExists(atPath: $0) }
@@ -774,6 +785,19 @@ final class AppSettings {
         guard let snapshot = store.load(sessionId: trimmedSessionId) else {
             lastReplayErrorMessage = "Saved capture is missing."
             return false
+        }
+
+        if makeLocalConfig().runtimeMode == .local {
+            let accepted = LocalVoiceRunCoordinator.shared.reprocessCapturedSession(
+                sessionId: trimmedSessionId,
+                appSettings: self,
+                chatStore: chatStore,
+                source: source
+            )
+            if !accepted {
+                lastReplayErrorMessage = "Saved audio is missing."
+            }
+            return accepted
         }
 
         let mode = replayMode(for: snapshot, chatStore: chatStore)
@@ -1133,21 +1157,16 @@ final class AppSettings {
         UserDefaults.standard.removeObject(forKey: Keys.localProcessorWarmupInFlightModelID)
         DebugLog.runtime("local_processor_command_warmup_scheduled reason=\(reason) mode=\(mode.rawValue)")
 
-        localProcessorCommandWarmupTasks[mode] = Task { @MainActor [weak self] in
-            guard let self else { return }
-            let initialProgress: LocalProcessorProgress = {
-                if mode == .agent {
-                    return .gemmaStarting()
-                }
-                return .transcriptLLMStarting()
-            }()
-            self.localProcessorStatus = LocalProcessorStatus.current(
-                isPreparing: true,
-                progress: initialProgress
-            )
+        localProcessorCommandWarmupTasks[mode] = Task { [weak self] in
+            await MainActor.run {
+                self?.localProcessorStatus = LocalProcessorStatus.current(
+                    isPreparing: true,
+                    progress: .fluidAudioStarting()
+                )
+            }
 
             do {
-                self.localProcessorStatus = try await LocalProcessingRouter.warmLocalProcessorForCommand(
+                let status = try await LocalProcessingRouter.warmLocalProcessorForCommand(
                     mode: mode,
                     config: config
                 ) { [weak self] progress in
@@ -1156,13 +1175,20 @@ final class AppSettings {
                         progress: progress
                     )
                 }
-                DebugLog.runtime("local_processor_command_warmup_completed reason=\(reason) mode=\(mode.rawValue)")
+                await MainActor.run {
+                    self?.localProcessorStatus = status
+                    DebugLog.runtime("local_processor_command_warmup_completed reason=\(reason) mode=\(mode.rawValue)")
+                }
             } catch {
-                self.localProcessorStatus = LocalProcessorStatus.current(errorMessage: error.localizedDescription)
-                DebugLog.runtimeError("local_processor_command_warmup_failed reason=\(reason) mode=\(mode.rawValue) error=\(error.localizedDescription)")
+                await MainActor.run {
+                    self?.localProcessorStatus = LocalProcessorStatus.current(errorMessage: error.localizedDescription)
+                    DebugLog.runtimeError("local_processor_command_warmup_failed reason=\(reason) mode=\(mode.rawValue) error=\(error.localizedDescription)")
+                }
             }
 
-            self.localProcessorCommandWarmupTasks[mode] = nil
+            await MainActor.run {
+                self?.localProcessorCommandWarmupTasks[mode] = nil
+            }
         }
     }
 
@@ -1385,16 +1411,16 @@ final class AppSettings {
         launchAtLogin = true
         bubbleOnlyWhileRecording = false
         listeningMode = .hold
-        transcriptShortcut = .default
+        transcriptShortcut = .localDualPhaseDefault
         agentShortcut = .feedbackDefault
-        recordingShortcut = .default
+        recordingShortcut = .localDualPhaseDefault
         feedbackShortcutEnabled = false
         feedbackShortcut = .feedbackDefault
         runtimeMode = .local
         autoPasteEnabled = true
         copyTranscriptToClipboardEnabled = false
         restoreOriginalClipboardAfterPasteEnabled = false
-        transcriptScreenOCREnabled = true
+        transcriptScreenOCREnabled = false
         fullScreenScreenshotCaptureEnabled = false
         capturedAudioRetentionDays = 30
         agentModeEnabled = true
@@ -1526,8 +1552,8 @@ final class AppSettings {
         restoreOriginalClipboardAfterPasteEnabled =
             UserDefaults.standard.object(forKey: Keys.restoreOriginalClipboardAfterPasteEnabled) as? Bool
             ?? storedConfig.restoreOriginalClipboardAfterPaste
-        transcriptScreenOCREnabled = true
-        UserDefaults.standard.set(true, forKey: Keys.transcriptScreenOCREnabled)
+        transcriptScreenOCREnabled = false
+        UserDefaults.standard.set(false, forKey: Keys.transcriptScreenOCREnabled)
         fullScreenScreenshotCaptureEnabled =
             UserDefaults.standard.object(forKey: Keys.fullScreenScreenshotCaptureEnabled) as? Bool
             ?? storedConfig.fullScreenScreenshotCapture

@@ -274,6 +274,15 @@ final class AudioRecordingService: NSObject, ObservableObject {
         }
     }
 
+    func rotateChunkNow() -> AudioChunk? {
+        if Thread.isMainThread {
+            return rotateChunkNowOnMain()
+        }
+        return DispatchQueue.main.sync {
+            rotateChunkNowOnMain()
+        }
+    }
+
     private func stopChunkedRecordingOnMain() -> AudioChunk? {
         guard isChunkedRecording else { return nil }
         stopChunkTimer()
@@ -303,6 +312,22 @@ final class AudioRecordingService: NSObject, ObservableObject {
         chunkTimer = nil
     }
 
+    private func rotateChunkNowOnMain() -> AudioChunk? {
+        guard isChunkedRecording, !isRotatingChunk else { return nil }
+        isRotatingChunk = true
+        let url = stopRecordingOnMain(keepRecordingState: true)
+        let chunk: AudioChunk?
+        if let url {
+            let index = chunkIndex
+            chunkIndex += 1
+            chunk = AudioChunk(url: url, index: index)
+        } else {
+            chunk = nil
+        }
+        restartChunkRecordingAfterRotation()
+        return chunk
+    }
+
     private func rotateChunkIfNeeded() {
         guard isChunkedRecording, !isRotatingChunk else { return }
         isRotatingChunk = true
@@ -313,7 +338,10 @@ final class AudioRecordingService: NSObject, ObservableObject {
             chunkIndex += 1
             onChunkReady?(AudioChunk(url: url, index: index))
         }
+        restartChunkRecordingAfterRotation()
+    }
 
+    private func restartChunkRecordingAfterRotation() {
         let sinceStop = ProcessInfo.processInfo.systemUptime - lastStopUptime
         let delay = max(0, minimumRestartDelay - sinceStop)
 

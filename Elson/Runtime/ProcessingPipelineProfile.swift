@@ -39,7 +39,7 @@ struct ProcessingPipelineProfile: Equatable, Sendable {
     var shouldPrefetchScreenContext: Bool {
         switch runtimeMode {
         case .local:
-            return interactionMode == .agent || interactionMode == .transcription
+            return false
         case .hosted:
             return true
         }
@@ -58,16 +58,16 @@ struct ProcessingPipelineProfile: Equatable, Sendable {
         case .hosted:
             return "cloud_full_context"
         case .local:
-            return "local_ocr_text"
+            return "local_text_only"
         }
     }
 
     func shouldResolveScreenContext(for stage: ProcessingPipelineStage) -> Bool {
         switch stage {
         case .transcriptEnhancer:
-            return runtimeMode == .hosted || runtimeMode == .local
+            return runtimeMode == .hosted
         case .workingAgent:
-            return true
+            return runtimeMode == .hosted
         case .shortcutPrefetch:
             return shouldPrefetchScreenContext
         case .unknown:
@@ -87,7 +87,9 @@ struct ProcessingPipelineProfile: Equatable, Sendable {
             enhancedTranscript: request.enhancedTranscript,
             transcriptSnippetCount: request.transcriptSnippetCount,
             transcriptChunkTimings: request.transcriptChunkTimings,
-            myElsonMarkdown: MyElsonDocument.wordsGlossaryMarkdown(from: request.myElsonMarkdown),
+            transcriptContext: request.transcriptContext,
+            agentIntentTranscript: request.agentIntentTranscript,
+            myElsonMarkdown: "",
             transcriptAgentPrompt: "",
             workingAgentPrompt: "",
             selectionNote: nil,
@@ -95,8 +97,8 @@ struct ProcessingPipelineProfile: Equatable, Sendable {
             attachments: [],
             conversationHistory: [],
             screenContext: ElsonScreenContextPayload(
-                hasScreenContext: request.screenContext.hasScreenContext,
-                screenText: request.screenContext.screenText,
+                hasScreenContext: false,
+                screenText: nil,
                 screenDescription: nil
             ),
             timestamps: request.timestamps,

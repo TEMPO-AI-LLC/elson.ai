@@ -4,6 +4,7 @@ import os
 
 enum RequestTimelineStage: String, CaseIterable, Sendable {
     case audioCaptureFinalize = "audio_capture_finalize"
+    case audioTranscription = "audio_transcription"
     case groqTranscription = "groq_transcription"
     case screenContext = "screen_context"
     case speculativeTranscript = "speculative_transcript"

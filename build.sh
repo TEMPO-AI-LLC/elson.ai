@@ -11,6 +11,8 @@ LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchS
 DEST_APP="/Applications/${APP_NAME}.app"
 APP_SUPPORT_DIR="$HOME/Library/Application Support/${APP_NAME}"
 CONTAINER_DIR="$HOME/Library/Containers/${BUNDLE_ID}"
+CONTAINER_APP_SUPPORT_DIR="$CONTAINER_DIR/Data/Library/Application Support/${APP_NAME}"
+CONTAINER_PREFERENCES_PLIST="$CONTAINER_DIR/Data/Library/Preferences/${BUNDLE_ID}.plist"
 DEFAULT_WORKSPACE_CONFIG="$HOME/Documents/${APP_NAME}/Config/local-config.json"
 PREFERENCES_PLIST="$HOME/Library/Preferences/${BUNDLE_ID}.plist"
 BUILD_ROOT="$ROOT_DIR/Elson/build"
@@ -147,12 +149,33 @@ clean_installed_elson() {
     fi
   done
 
-  /bin/rm -rf "$APP_SUPPORT_DIR"
-  /bin/rm -rf "$CONTAINER_DIR/Data" 2>/dev/null || true
+  clean_elson_state_dir "$APP_SUPPORT_DIR"
+  clean_elson_state_dir "$CONTAINER_APP_SUPPORT_DIR"
   /bin/rm -f "$DEFAULT_WORKSPACE_CONFIG" 2>/dev/null || true
   /bin/rm -rf "$HOME/Library/Caches/${BUNDLE_ID}" 2>/dev/null || true
   /bin/rm -rf "$HOME/Library/Saved Application State/${BUNDLE_ID}.savedState" 2>/dev/null || true
   /bin/rm -f "$PREFERENCES_PLIST" 2>/dev/null || true
+  /bin/rm -f "$CONTAINER_PREFERENCES_PLIST" 2>/dev/null || true
+}
+
+clean_elson_state_dir() {
+  local state_dir="$1"
+  local path=""
+  local name=""
+
+  [ -d "$state_dir" ] || return 0
+
+  shopt -s nullglob dotglob
+  for path in "$state_dir"/*; do
+    name="$(basename "$path")"
+    case "$name" in
+      Logs|Evals|LocalProcessor|PendingAudioSessions|chat-threads|sessions|thread-attachments|transcript-history.json)
+        continue
+        ;;
+    esac
+    /bin/rm -rf "$path"
+  done
+  shopt -u nullglob dotglob
 }
 
 install_and_reset_tcc() {

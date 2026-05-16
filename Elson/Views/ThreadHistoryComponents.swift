@@ -63,7 +63,8 @@ struct ThreadHistoryComposer: View {
     @Binding var draftText: String
     @Binding var isComposerFocused: Bool
     @Binding var composerHeight: CGFloat
-    let capturedVoiceSession: LocalChunkedAudioSession?
+    let isVoiceRecording: Bool
+    let hasCapturedVoiceSession: Bool
     let isSending: Bool
     let canSend: Bool
     let onToggleVoiceCapture: () -> Void
@@ -74,17 +75,17 @@ struct ThreadHistoryComposer: View {
         ElsonGlassGroup(spacing: 10) {
             HStack(spacing: 10) {
                 Button(action: onToggleVoiceCapture) {
-                    Image(systemName: recordingService.isRecording ? "stop.fill" : "mic.fill")
-                        .foregroundStyle(recordingService.isRecording ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+                    Image(systemName: isVoiceRecording ? "stop.fill" : "mic.fill")
+                        .foregroundStyle(isVoiceRecording ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
                         .frame(width: 36, height: 36)
-                        .background(recordingService.isRecording ? Color.accentColor : Color.clear)
+                        .background(isVoiceRecording ? Color.accentColor : Color.clear)
                         .clipShape(Circle())
                         .elsonGlassSurface(.control, in: Circle())
                 }
                 .buttonStyle(.plain)
 
                 ZStack(alignment: .leading) {
-                    if draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, capturedVoiceSession == nil {
+                    if draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !hasCapturedVoiceSession {
                         Text("Message")
                             .font(.system(size: 13))
                             .foregroundStyle(.secondary)
@@ -95,7 +96,7 @@ struct ThreadHistoryComposer: View {
                     FWTextEditor(
                         text: $draftText,
                         isFocused: $isComposerFocused,
-                        isEditable: !isSending && !recordingService.isRecording,
+                        isEditable: !isSending && !isVoiceRecording,
                         minVisibleLines: 1,
                         maxVisibleLines: 5.5,
                         measuredHeight: $composerHeight,
@@ -107,7 +108,7 @@ struct ThreadHistoryComposer: View {
                         onEscape: onEscape
                     )
                     .frame(height: composerHeight)
-                    .opacity(recordingService.isRecording ? 0.55 : 1)
+                    .opacity(isVoiceRecording ? 0.55 : 1)
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)

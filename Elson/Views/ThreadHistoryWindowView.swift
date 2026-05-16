@@ -10,7 +10,9 @@ struct ThreadHistoryWindowView: View {
     @State private var draftText: String = ""
     @State private var isComposerFocused: Bool = false
     @State private var composerHeight: CGFloat = 22
-    @State private var capturedVoiceSession: LocalChunkedAudioSession? = nil
+    @State private var capturedHostedVoiceSession: HostedChunkedAudioSession? = nil
+    @State private var capturedLocalVoiceSession: LocalVoiceCaptureSession? = nil
+    @State private var capturedLocalVoiceRun: LocalVoiceCapturedRun? = nil
     @State private var isSending = false
     @State private var errorMessage: String? = nil
     @State private var expandedVoiceMessageID: String? = nil
@@ -23,9 +25,14 @@ struct ThreadHistoryWindowView: View {
         let threadId = chatStore.thread.id
         let trimmedDraft = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
         let selectedThreadTarget = ThreadModeStore.get(threadId: threadId)
+        let hasCapturedVoiceSession = capturedHostedVoiceSession != nil
+            || capturedLocalVoiceSession != nil
+            || capturedLocalVoiceRun != nil
+        let isVoiceRecording = recordingService.isRecording
+            || (capturedLocalVoiceSession?.isRecording ?? false)
         let canSend = !isSending
             && selectedThreadTarget != nil
-            && (!trimmedDraft.isEmpty || recordingService.isRecording || capturedVoiceSession != nil)
+            && (!trimmedDraft.isEmpty || isVoiceRecording || hasCapturedVoiceSession)
         let renderedMessages = mapLocalTailMessages(threadId: threadId)
 
         ZStack {
@@ -112,7 +119,8 @@ struct ThreadHistoryWindowView: View {
             draftText: $draftText,
             isComposerFocused: $isComposerFocused,
             composerHeight: $composerHeight,
-            capturedVoiceSession: capturedVoiceSession,
+            isVoiceRecording: recordingService.isRecording || (capturedLocalVoiceSession?.isRecording ?? false),
+            hasCapturedVoiceSession: capturedHostedVoiceSession != nil || capturedLocalVoiceSession != nil || capturedLocalVoiceRun != nil,
             isSending: isSending,
             canSend: canSend,
             onToggleVoiceCapture: toggleVoiceCapture,
@@ -144,8 +152,13 @@ struct ThreadHistoryWindowView: View {
     }
 
     private func toggleVoiceCapture() {
+        if appSettings.runtimeMode == .local {
+            toggleLocalVoiceCapture()
+            return
+        }
+
         if recordingService.isRecording {
-            guard let session = capturedVoiceSession else {
+            guard let session = capturedHostedVoiceSession else {
                 appSettings.isRecording = false
                 appSettings.indicatorState = .error
                 errorMessage = "Missing audio session."
@@ -158,11 +171,11 @@ struct ThreadHistoryWindowView: View {
                     appSettings.isRecording = false
                     appSettings.indicatorState = .idle
                     if !kept {
-                        capturedVoiceSession = nil
+                        capturedHostedVoiceSession = nil
                         errorMessage = "Recording too short."
                     }
                 } catch {
-                    capturedVoiceSession = nil
+                    capturedHostedVoiceSession = nil
                     appSettings.isRecording = false
                     appSettings.indicatorState = .error
                     errorMessage = error.localizedDescription
@@ -179,8 +192,8 @@ struct ThreadHistoryWindowView: View {
                 return
             }
 
-            capturedVoiceSession = nil
-            let session = LocalChunkedAudioSession(
+            capturedHostedVoiceSession = nil
+            let session = HostedChunkedAudioSession(
                 recordingService: recordingService,
                 groqAPIKey: appSettings.makeLocalConfig().groqAPIKey,
                 modeHint: (ThreadModeStore.get(threadId: chatStore.thread.id) ?? pendingThreadTarget) == .agent ? .agent : .transcription,
@@ -196,7 +209,7 @@ struct ThreadHistoryWindowView: View {
                 return
             }
 
-            capturedVoiceSession = session
+            capturedHostedVoiceSession = session
             appSettings.pendingScreenshotJPEGData = []
             appSettings.indicatorState = .listening
             appSettings.isRecording = true
@@ -205,20 +218,140 @@ struct ThreadHistoryWindowView: View {
             Task {
                 guard let captured = try? await captureScreenshotDataIfPossible() else { return }
                 await MainActor.run {
-                    guard capturedVoiceSession === session else { return }
+                    guard capturedHostedVoiceSession === session else { return }
                     appSettings.pendingScreenshotJPEGData = [captured]
                 }
             }
         }
     }
 
+    private func toggleLocalVoiceCapture() {
+        if let session = capturedLocalVoiceSession, session.isRecording {
+            stopLocalComposerVoiceCapture(session)
+            return
+        }
+
+        capturedLocalVoiceRun = nil
+        Task { @MainActor in
+            if !PermissionCoordinator.hasMicrophonePermission() {
+                do {
+                    try await PermissionCoordinator.ensureMicrophonePermission()
+                } catch {
+                    errorMessage = error.localizedDescription
+                    return
+                }
+            }
+
+            let threadId = chatStore.thread.id
+            let selectedThreadTarget = ThreadModeStore.get(threadId: threadId) ?? pendingThreadTarget
+            let mode: InteractionMode = selectedThreadTarget == .agent ? .agent : .transcription
+            let session = LocalVoiceCaptureSession(
+                requestId: UUID().uuidString,
+                threadId: threadId,
+                mode: mode,
+                sourceSurface: "chat"
+            )
+            do {
+                try session.start()
+            } catch {
+                errorMessage = error.localizedDescription
+                appSettings.indicatorState = .error
+                return
+            }
+
+            capturedHostedVoiceSession = nil
+            capturedLocalVoiceSession = session
+            capturedLocalVoiceRun = nil
+            appSettings.pendingScreenshotJPEGData = []
+            appSettings.indicatorState = .listening
+            appSettings.isRecording = true
+            errorMessage = nil
+            appSettings.startLocalProcessorCommandWarmup(mode: mode, reason: "chat_voice_recording_started")
+        }
+    }
+
+    private func stopLocalComposerVoiceCapture(_ session: LocalVoiceCaptureSession) {
+        do {
+            let run = try session.stop(minimumDuration: minimumVoiceMessageDuration, latencyContext: nil)
+            capturedLocalVoiceSession = nil
+            capturedLocalVoiceRun = run
+            appSettings.isRecording = false
+            appSettings.indicatorState = .idle
+            errorMessage = nil
+        } catch {
+            capturedLocalVoiceSession = nil
+            capturedLocalVoiceRun = nil
+            appSettings.isRecording = false
+            appSettings.indicatorState = .error
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func sendLocalVoiceMessage(
+        config: ElsonLocalConfig,
+        pendingAttachments: [AgentAttachment],
+        clipboardText: String?
+    ) {
+        guard !isSending else { return }
+        let run: LocalVoiceCapturedRun
+        if let capturedLocalVoiceRun {
+            run = capturedLocalVoiceRun
+        } else if let session = capturedLocalVoiceSession {
+            do {
+                run = try session.stop(minimumDuration: minimumVoiceMessageDuration, latencyContext: nil)
+            } catch {
+                capturedLocalVoiceSession = nil
+                capturedLocalVoiceRun = nil
+                appSettings.isRecording = false
+                appSettings.indicatorState = .error
+                errorMessage = error.localizedDescription
+                return
+            }
+        } else {
+            return
+        }
+
+        isSending = true
+        errorMessage = nil
+        draftText = ""
+        capturedLocalVoiceSession = nil
+        capturedLocalVoiceRun = nil
+        appSettings.isRecording = false
+        appSettings.indicatorState = run.isAgentRun ? .agentProcessing : .processing
+
+        let screenshotTask: Task<[Data], Never>? = if run.isAgentRun {
+            Task { @MainActor in
+                guard let captured = try? await captureScreenshotDataIfPossible(fullScreen: true) else {
+                    return []
+                }
+                return [captured]
+            }
+        } else {
+            nil
+        }
+        LocalVoiceRunCoordinator.shared.processCapturedRun(
+            run,
+            appSettings: appSettings,
+            chatStore: chatStore,
+            config: config,
+            pendingAttachments: run.isAgentRun ? pendingAttachments : [],
+            clipboardText: run.isAgentRun ? clipboardText : nil,
+            screenshotJPEGData: [],
+            screenshotJPEGDataTask: screenshotTask,
+            source: "chat"
+        )
+        isSending = false
+    }
+
     private func sendMessage() {
         let trimmed = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
         let threadId = chatStore.thread.id
         guard !isSending else { return }
-        guard !trimmed.isEmpty || capturedVoiceSession != nil || recordingService.isRecording else { return }
+        let hasLocalVoice = capturedLocalVoiceSession != nil || capturedLocalVoiceRun != nil
+        let hasHostedVoice = capturedHostedVoiceSession != nil || recordingService.isRecording
+        guard !trimmed.isEmpty || hasLocalVoice || hasHostedVoice else { return }
 
-        let isVoiceMessage = recordingService.isRecording || capturedVoiceSession != nil
+        let isVoiceMessage = hasLocalVoice || hasHostedVoice
 
         let optimisticMessageId = UUID()
         let placeholder = trimmed.isEmpty ? "Voice message..." : trimmed
@@ -231,7 +364,18 @@ struct ThreadHistoryWindowView: View {
         let conversationHistory = outgoingConversationHistory()
         let selectedThreadTarget = ThreadModeStore.get(threadId: threadId) ?? pendingThreadTarget
         let mode: InteractionMode = selectedThreadTarget == .agent ? .agent : .transcription
-        let requestId = capturedVoiceSession?.requestId ?? UUID().uuidString
+        let requestId = capturedLocalVoiceRun?.requestId
+            ?? capturedLocalVoiceSession?.requestId
+            ?? capturedHostedVoiceSession?.requestId
+            ?? UUID().uuidString
+        if config.runtimeMode == .local, hasLocalVoice {
+            sendLocalVoiceMessage(
+                config: config,
+                pendingAttachments: pendingAttachments,
+                clipboardText: clipboardText
+            )
+            return
+        }
         isSending = true
         errorMessage = nil
         draftText = ""
@@ -257,7 +401,7 @@ struct ThreadHistoryWindowView: View {
 
         func finalizeRequest(
             result: RuntimeExecutionResult,
-            finalizedVoiceSession: LocalChunkedAudioSession?,
+            finalizedVoiceSession: HostedChunkedAudioSession?,
             timelineBase: RequestTimelineSnapshot,
             requestStartedAt: Date,
             useVoiceMessageStyle: Bool
@@ -320,7 +464,7 @@ struct ThreadHistoryWindowView: View {
                     sessionKey: result.sessionKey,
                     markUnread: false
                 )
-                capturedVoiceSession = nil
+                capturedHostedVoiceSession = nil
                 isSending = false
                 appSettings.recordLastOutput(from: result, captureSessionId: captureSessionId)
                 if !result.replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -378,7 +522,7 @@ struct ThreadHistoryWindowView: View {
                     inputSource: isVoiceMessage ? "audio" : "text",
                     startedAt: requestStartedAt
                 )
-                var finalizedVoiceSession: LocalChunkedAudioSession?
+                var finalizedVoiceSession: HostedChunkedAudioSession?
                 if isVoiceMessage {
                     pendingScreenshotJPEGData = if !reusableContextScreenshotData.isEmpty {
                         reusableContextScreenshotData
@@ -398,7 +542,7 @@ struct ThreadHistoryWindowView: View {
                         )
                     }
                 }
-                if let voiceSession = capturedVoiceSession {
+                if let voiceSession = capturedHostedVoiceSession {
                     finalizedVoiceSession = voiceSession
                     voiceSession.updateReplayContext(mode: mode, threadId: threadId)
                     if recordingService.isRecording {
@@ -414,7 +558,7 @@ struct ThreadHistoryWindowView: View {
                         if !kept {
                             if trimmed.isEmpty {
                                 await MainActor.run {
-                                    capturedVoiceSession = nil
+                                    capturedHostedVoiceSession = nil
                                     isSending = false
                                     chatStore.endRun(threadId: threadId)
                                     appSettings.indicatorState = .idle
@@ -424,7 +568,7 @@ struct ThreadHistoryWindowView: View {
                             }
 
                             await MainActor.run {
-                                capturedVoiceSession = nil
+                                capturedHostedVoiceSession = nil
                                 chatStore.append(
                                     ChatMessage(
                                         id: optimisticMessageId,
@@ -558,7 +702,7 @@ struct ThreadHistoryWindowView: View {
                 await MainActor.run {
                     let friendlyErrorMessage = userFacingSendErrorMessage(error.localizedDescription)
                     let noSpeechDetected = isNoSpeechDetectedMessage(friendlyErrorMessage)
-                    let failedSessionId = isVoiceMessage ? capturedVoiceSession?.persistedSessionId : nil
+                    let failedSessionId = isVoiceMessage ? capturedHostedVoiceSession?.persistedSessionId : nil
                     let archivedRawTranscript = failedSessionId.flatMap {
                         LocalCapturedAudioSessionStore().rawTranscript(sessionId: $0)
                     }
@@ -593,8 +737,8 @@ struct ThreadHistoryWindowView: View {
                         chatStore.removeMessage(id: optimisticMessageId)
                     }
                     errorMessage = friendlyErrorMessage
-                    if capturedVoiceSession?.isStopped != true {
-                        capturedVoiceSession = nil
+                    if capturedHostedVoiceSession?.isStopped != true {
+                        capturedHostedVoiceSession = nil
                     } else {
                         draftText = trimmed
                     }
@@ -642,11 +786,13 @@ struct ThreadHistoryWindowView: View {
         return [captured]
     }
 
-    private func captureScreenshotDataIfPossible() async throws -> Data {
-        try await ScreenSnapshotService.shared.captureJPEGDataIfPermitted(
-            maxPixelSize: appSettings.screenshotCaptureMaxPixelSize,
+    private func captureScreenshotDataIfPossible(fullScreen: Bool = false) async throws -> Data {
+        let maxPixelSize = fullScreen ? 1280 : appSettings.screenshotCaptureMaxPixelSize
+        let cropRadius = fullScreen ? nil : appSettings.screenshotCaptureCropAroundMousePixelRadius
+        return try await ScreenSnapshotService.shared.captureJPEGDataIfPermitted(
+            maxPixelSize: maxPixelSize,
             quality: 0.7,
-            cropAroundMousePixelRadius: appSettings.screenshotCaptureCropAroundMousePixelRadius
+            cropAroundMousePixelRadius: cropRadius
         )
     }
 
@@ -722,9 +868,12 @@ struct ThreadHistoryWindowView: View {
     }
 
     private func cancelVoiceCaptureIfNeeded() {
-        guard recordingService.isRecording || capturedVoiceSession != nil else { return }
-        capturedVoiceSession?.cancel()
-        capturedVoiceSession = nil
+        guard recordingService.isRecording || capturedHostedVoiceSession != nil || capturedLocalVoiceSession != nil else { return }
+        capturedHostedVoiceSession?.cancel()
+        capturedHostedVoiceSession = nil
+        capturedLocalVoiceSession?.cancel(reason: "cancelled")
+        capturedLocalVoiceSession = nil
+        capturedLocalVoiceRun = nil
         appSettings.isRecording = false
         appSettings.indicatorState = .idle
         errorMessage = nil

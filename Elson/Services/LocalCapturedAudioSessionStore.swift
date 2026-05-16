@@ -25,7 +25,11 @@ struct LocalCapturedAudioSessionSnapshot: Codable, Equatable, Identifiable, Send
     var errorMessage: String?
     var rawTranscript: String?
     var snippetCount: Int?
+    var transcriptRawText: String?
+    var agentIntentRawText: String?
     var audioFilePath: String?
+    var transcriptAudioFilePath: String?
+    var agentIntentAudioFilePath: String?
     var rawTranscriptFilePath: String?
     var chunkAudioFilePaths: [String]
     var transcriptChunkTimings: [ElsonTranscriptChunkTimingPayload]?
@@ -53,7 +57,11 @@ extension LocalCapturedAudioSessionSnapshot {
         case errorMessage
         case rawTranscript
         case snippetCount
+        case transcriptRawText
+        case agentIntentRawText
         case audioFilePath
+        case transcriptAudioFilePath
+        case agentIntentAudioFilePath
         case rawTranscriptFilePath
         case chunkAudioFilePaths
         case transcriptChunkTimings
@@ -104,7 +112,11 @@ final class LocalCapturedAudioSessionStore: @unchecked Sendable {
             errorMessage: nil,
             rawTranscript: nil,
             snippetCount: nil,
+            transcriptRawText: nil,
+            agentIntentRawText: nil,
             audioFilePath: nil,
+            transcriptAudioFilePath: nil,
+            agentIntentAudioFilePath: nil,
             rawTranscriptFilePath: nil,
             chunkAudioFilePaths: [],
             transcriptChunkTimings: nil,
@@ -149,6 +161,29 @@ final class LocalCapturedAudioSessionStore: @unchecked Sendable {
         return destinationURL
     }
 
+    func stagePhaseAudio(sessionId: String, phase: LocalVoiceCapturePhase, sourceURL: URL) throws -> URL {
+        var snapshot = try loadOrCreateFallback(sessionId: sessionId)
+        let phasesDirectory = snapshot.sessionDirectoryURL.appendingPathComponent("phases", isDirectory: true)
+        try fileManager.createDirectory(at: phasesDirectory, withIntermediateDirectories: true)
+
+        let pathExtension = sourceURL.pathExtension.isEmpty ? "wav" : sourceURL.pathExtension
+        let destinationURL = phasesDirectory.appendingPathComponent("\(phase.rawValue).\(pathExtension)")
+        if fileManager.fileExists(atPath: destinationURL.path) {
+            try fileManager.removeItem(at: destinationURL)
+        }
+        try fileManager.copyItem(at: sourceURL, to: destinationURL)
+
+        switch phase {
+        case .transcript:
+            snapshot.transcriptAudioFilePath = destinationURL.path
+        case .agentIntent:
+            snapshot.agentIntentAudioFilePath = destinationURL.path
+        }
+        snapshot.status = snapshot.status == .recording ? .stopped : snapshot.status
+        try save(&snapshot)
+        return destinationURL
+    }
+
     @discardableResult
     func writeAudioWAV(sessionId: String, sourceURLs: [URL]) throws -> URL? {
         let readableURLs = sourceURLs.filter { fileManager.fileExists(atPath: $0.path) }
@@ -171,6 +206,8 @@ final class LocalCapturedAudioSessionStore: @unchecked Sendable {
         sessionId: String,
         rawTranscript: String,
         snippetCount: Int?,
+        transcriptRawText: String? = nil,
+        agentIntentRawText: String? = nil,
         transcriptChunkTimings: [ElsonTranscriptChunkTimingPayload] = [],
         status: LocalCapturedAudioSessionStatus = .ready,
         isPartial: Bool = false,
@@ -184,6 +221,8 @@ final class LocalCapturedAudioSessionStore: @unchecked Sendable {
         snapshot.rawTranscript = trimmed.isEmpty ? nil : trimmed
         snapshot.rawTranscriptFilePath = rawURL.path
         snapshot.snippetCount = snippetCount
+        snapshot.transcriptRawText = normalized(transcriptRawText)
+        snapshot.agentIntentRawText = normalized(agentIntentRawText)
         snapshot.transcriptChunkTimings = transcriptChunkTimings.isEmpty ? nil : transcriptChunkTimings
         snapshot.status = status
         snapshot.isPartial = isPartial || status == .partial
@@ -252,9 +291,24 @@ final class LocalCapturedAudioSessionStore: @unchecked Sendable {
         if let path = snapshot.audioFilePath, fileManager.fileExists(atPath: path) {
             return URL(fileURLWithPath: path)
         }
+        if let path = snapshot.transcriptAudioFilePath, fileManager.fileExists(atPath: path) {
+            return URL(fileURLWithPath: path)
+        }
         return snapshot.chunkAudioFilePaths
             .map(URL.init(fileURLWithPath:))
             .first { fileManager.fileExists(atPath: $0.path) }
+    }
+
+    func phaseAudioURL(sessionId: String, phase: LocalVoiceCapturePhase) -> URL? {
+        guard let snapshot = load(sessionId: sessionId) else { return nil }
+        let path: String? = switch phase {
+        case .transcript:
+            snapshot.transcriptAudioFilePath
+        case .agentIntent:
+            snapshot.agentIntentAudioFilePath
+        }
+        guard let path, fileManager.fileExists(atPath: path) else { return nil }
+        return URL(fileURLWithPath: path)
     }
 
     func purgeExpiredSessions(now: Date = Date()) {

@@ -7,7 +7,6 @@ import MLX
 import MLXLLM
 import MLXLMCommon
 import MLXRandom
-import MLXVLM
 
 enum LocalProcessingAudioBackend: String, Sendable {
     case fluidAudio
@@ -36,6 +35,23 @@ enum LocalProcessorPaths {
 
     static var modelCacheDirectory: URL {
         rootDirectory.appendingPathComponent("LLMModels", isDirectory: true)
+    }
+
+    static var asrModelsRootDirectory: URL {
+        rootDirectory.appendingPathComponent("ASRModels", isDirectory: true)
+    }
+
+    static var fluidAudioASRModelDirectory: URL {
+        asrModelsRootDirectory.appendingPathComponent("parakeet-tdt-0.6b-v3", isDirectory: true)
+    }
+
+    static var legacyFluidAudioASRModelDirectory: URL {
+        FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)
+            .first!
+            .appendingPathComponent("FluidAudio", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
+            .appendingPathComponent("parakeet-tdt-0.6b-v3", isDirectory: true)
     }
 
     static var legacyGemmaModelsDirectory: URL {
@@ -146,11 +162,52 @@ enum LocalProcessorModelCache {
     }
 }
 
+enum LocalProcessorASRCache {
+    static func prepareStorage() throws {
+        try FileManager.default.createDirectory(
+            at: LocalProcessorPaths.asrModelsRootDirectory,
+            withIntermediateDirectories: true
+        )
+        try migrateLegacyCacheIfNeeded()
+    }
+
+    static func migrateLegacyCacheIfNeeded() throws {
+        let fileManager = FileManager.default
+        let target = LocalProcessorPaths.fluidAudioASRModelDirectory
+        let legacy = LocalProcessorPaths.legacyFluidAudioASRModelDirectory
+        let targetExists = fileManager.fileExists(atPath: target.path)
+        let legacyExists = fileManager.fileExists(atPath: legacy.path)
+
+        guard legacyExists else { return }
+
+        if !targetExists {
+            try fileManager.createDirectory(
+                at: target.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            do {
+                try fileManager.moveItem(at: legacy, to: target)
+                DebugLog.runtime("local_processor_migrated_fluid_audio_asr_cache from=\(legacy.path) to=\(target.path)")
+            } catch {
+                try fileManager.copyItem(at: legacy, to: target)
+                try? fileManager.removeItem(at: legacy)
+                DebugLog.runtime("local_processor_copied_fluid_audio_asr_cache from=\(legacy.path) to=\(target.path)")
+            }
+        } else {
+            try? fileManager.removeItem(at: legacy)
+            DebugLog.runtime("local_processor_removed_legacy_fluid_audio_asr_cache path=\(legacy.path)")
+        }
+
+        let legacyModelsRoot = legacy.deletingLastPathComponent()
+        if ((try? fileManager.contentsOfDirectory(atPath: legacyModelsRoot.path)) ?? []).isEmpty {
+            try? fileManager.removeItem(at: legacyModelsRoot)
+        }
+    }
+}
+
 struct LocalProcessorProgress: Equatable, Sendable {
     enum Stage: String, Equatable, Sendable {
         case fluidAudio
-        case ocrDownload
-        case ocrLoad
         case transcriptLLMDownload
         case transcriptLLMLoad
         case gemmaDownload
@@ -175,7 +232,6 @@ struct LocalProcessorStatus: Equatable, Sendable {
     let fluidAudioReady: Bool
     let transcriptLLMReady: Bool
     let gemmaReady: Bool
-    let ocrReady: Bool
     let isPreparing: Bool
     let progress: LocalProcessorProgress?
     let errorMessage: String?
@@ -186,27 +242,18 @@ struct LocalProcessorStatus: Equatable, Sendable {
         displayName: gemmaModel.displayName,
         estimatedSizeGB: Double(gemmaModel.estimatedSizeGB)
     )
-    static let ocrModel = LocalProcessorLLMModel(
-        id: "mlx-community/LightOnOCR-1B-1025-4bit",
-        displayName: "LightOnOCR 1B (4-bit)",
-        estimatedSizeGB: 1.0
-    )
     static let activeLLMModelIDs: Set<String> = [
-        gemmaModel.rawValue,
-        ocrModel.id,
+        gemmaModel.rawValue
     ]
     static var sharedGemmaDisplayName: String {
         "\(gemmaModel.displayName) (Transcript + Agent)"
-    }
-    static var ocrScreenTextDisplayName: String {
-        "\(ocrModel.displayName) (screen text)"
     }
     static var activeLLMModelSignature: String {
         activeLLMModelIDs.sorted().joined(separator: "|")
     }
 
     var isReady: Bool {
-        fluidAudioReady && gemmaReady && ocrReady && errorMessage == nil
+        fluidAudioReady && gemmaReady && errorMessage == nil
     }
 
     var summary: String {
@@ -225,14 +272,13 @@ struct LocalProcessorStatus: Equatable, Sendable {
 
         var missing: [String] = []
         if !fluidAudioReady { missing.append("FluidAudio") }
-        if !ocrReady { missing.append("LightOnOCR") }
         if !gemmaReady { missing.append("Gemma 4 E2B") }
         return missing.isEmpty ? "Local processor not checked." : "Download required: \(missing.joined(separator: ", "))."
     }
 
     var detail: String {
-        let totalModelSizeGB = Double(Self.gemmaModel.estimatedSizeGB) + Self.ocrModel.estimatedSizeGB
-        return "FluidAudio v3 auto. Gemma 4 E2B handles Transcript + Agent. LightOnOCR extracts screen text. Total ~\(String(format: "%.1f", totalModelSizeGB)) GB."
+        let totalModelSizeGB = Double(Self.gemmaModel.estimatedSizeGB)
+        return "FluidAudio v3 auto. Gemma 4 E2B handles Transcript + Agent. Total ~\(String(format: "%.1f", totalModelSizeGB)) GB."
     }
 
     static func current(
@@ -241,14 +287,17 @@ struct LocalProcessorStatus: Equatable, Sendable {
         errorMessage: String? = nil
     ) -> LocalProcessorStatus {
         LocalProcessorPaths.configureLLMCache()
-        let asrReady = AsrModels.modelsExist(at: AsrModels.defaultCacheDirectory(for: .v3))
+        try? LocalProcessorASRCache.prepareStorage()
+        let asrReady = AsrModels.modelsExist(
+            at: LocalProcessorPaths.fluidAudioASRModelDirectory,
+            version: .v3,
+            encoderPrecision: .int8
+        )
         let gemmaReady = LocalProcessorModelCache.isDownloaded(gemmaModel)
-        let ocrReady = LocalProcessorModelCache.isDownloaded(ocrModel)
         return LocalProcessorStatus(
             fluidAudioReady: asrReady,
             transcriptLLMReady: gemmaReady,
             gemmaReady: gemmaReady,
-            ocrReady: ocrReady,
             isPreparing: isPreparing,
             progress: progress,
             errorMessage: errorMessage
@@ -313,34 +362,6 @@ extension LocalProcessorProgress {
             fraction: 0.98,
             title: "Loading \(modelName)...",
             detail: "Warming the local model pipeline."
-        )
-    }
-
-    static func ocrStarting() -> LocalProcessorProgress {
-        let modelName = LocalProcessorStatus.ocrModel.displayName
-        return LocalProcessorProgress(
-            stage: .ocrDownload,
-            fraction: 0.02,
-            title: "Preparing \(modelName)...",
-            detail: "Checking local OCR model cache."
-        )
-    }
-
-    static func ocrDownload(_ progress: Gemma4DownloadProgress) -> LocalProcessorProgress {
-        llmDownloadProgress(
-            progress,
-            modelName: LocalProcessorStatus.ocrModel.displayName,
-            stage: .ocrDownload
-        )
-    }
-
-    static func ocrLoading() -> LocalProcessorProgress {
-        let modelName = LocalProcessorStatus.ocrModel.displayName
-        return LocalProcessorProgress(
-            stage: .ocrLoad,
-            fraction: 0.98,
-            title: "Loading \(modelName)...",
-            detail: "Warming the local OCR model pipeline."
         )
     }
 
@@ -417,18 +438,24 @@ actor FluidAudioTranscriber: LocalAudioTranscribing {
 
     func prepare(progressHandler: DownloadUtils.ProgressHandler? = nil) async throws {
         guard !isPrepared else { return }
+        let startedAt = Date()
+        DebugLog.runtime("local_fluid_audio_prepare_started model=parakeet-tdt-0.6b-v3")
+        try LocalProcessorASRCache.prepareStorage()
         let configuration = MLModelConfiguration()
         configuration.computeUnits = .cpuAndGPU
         configuration.allowLowPrecisionAccumulationOnGPU = true
 
         let models = try await AsrModels.downloadAndLoad(
+            to: LocalProcessorPaths.fluidAudioASRModelDirectory,
             configuration: configuration,
             version: .v3,
+            encoderPrecision: .int8,
             progressHandler: progressHandler
         )
         try await manager.loadModels(models)
         decoderState = TdtDecoderState.make()
         isPrepared = true
+        DebugLog.runtime("local_fluid_audio_prepare_completed model=parakeet-tdt-0.6b-v3 fluid_audio_load_ms=\(Int(Date().timeIntervalSince(startedAt) * 1000))")
     }
 
     func transcribeDetailed(
@@ -472,198 +499,6 @@ actor FluidAudioTranscriber: LocalAudioTranscribing {
             duration: result.duration,
             segments: nil
         )
-    }
-}
-
-@MainActor
-final class LocalLightOnOCRService {
-    static let shared = LocalLightOnOCRService()
-
-    private var container: ModelContainer?
-    private var isPreparing = false
-
-    private init() {}
-
-    func prepare(
-        progress: (@Sendable (Gemma4DownloadProgress) -> Void)? = nil,
-        loadStarted: (@Sendable () -> Void)? = nil
-    ) async throws {
-        if container != nil { return }
-        if isPreparing {
-            let waitStartedAt = Date()
-            DebugLog.runtime("local_lighton_ocr_prepare_joined model=\(LocalProcessorStatus.ocrModel.id)")
-            while isPreparing {
-                try await Task.sleep(nanoseconds: 250_000_000)
-            }
-            if container != nil {
-                DebugLog.runtime("local_lighton_ocr_prepare_join_completed model=\(LocalProcessorStatus.ocrModel.id) ocr_prepare_wait_ms=\(durationMS(since: waitStartedAt))")
-                return
-            }
-        }
-
-        isPreparing = true
-        defer { isPreparing = false }
-
-        let prepareStartedAt = Date()
-        try LocalProcessorModelCache.removeStaleModels()
-        try LocalProcessorModelCache.prepareDownloadRoot()
-        let model = LocalProcessorStatus.ocrModel
-        var downloadMS = 0
-        if !LocalProcessorModelCache.isDownloaded(model) {
-            let downloadStartedAt = Date()
-            _ = try await Gemma4ModelDownloader.download(
-                modelId: model.id,
-                progress: progress
-            )
-            downloadMS = durationMS(since: downloadStartedAt)
-        }
-
-        guard let localPath = LocalProcessorModelCache.localPath(for: model.id) else {
-            throw LocalAIServiceError.invalidResponse("LightOnOCR local model cache")
-        }
-
-        try Self.patchLightOnProcessorConfigIfNeeded(at: localPath)
-        let loadStartedAt = Date()
-        loadStarted?()
-        container = try await VLMModelFactory.shared.loadContainer(
-            from: localPath,
-            using: Gemma4TokenizerLoader()
-        )
-        DebugLog.runtime("local_lighton_ocr_prepare_completed model=\(model.id) ocr_download_ms=\(downloadMS) ocr_load_ms=\(durationMS(since: loadStartedAt)) total_prepare_ms=\(durationMS(since: prepareStartedAt))")
-    }
-
-    func extractScreenContext(
-        images: [LocalImageInput],
-        logContext: LocalRequestLogContext
-    ) async throws -> LocalScreenContext {
-        guard !images.isEmpty else { return .none }
-        let startedAt = Date()
-        let prompt = ElsonPromptCatalog.localOCRUserPrompt()
-
-        DebugLog.providerEvent(
-            phase: "start",
-            service: "local_lighton_ocr_screen_extraction",
-            model: LocalProcessorStatus.ocrModel.id,
-            metadata: "\(logContext.metadata) images=\(images.count)",
-            payloadPreview: prompt
-        )
-
-        let output: String
-        let prepareStartedAt = Date()
-        var prepareMS = 0
-        var generationMS = 0
-        do {
-            try await prepare()
-            prepareMS = durationMS(since: prepareStartedAt)
-            let generationStartedAt = Date()
-            output = try await generateOCRText(
-                prompt: prompt,
-                images: images,
-                maxTokens: 1200,
-                ensurePrepared: false
-            )
-            generationMS = durationMS(since: generationStartedAt)
-        } catch {
-            DebugLog.providerFailure(
-                service: "local_lighton_ocr_screen_extraction",
-                model: LocalProcessorStatus.ocrModel.id,
-                metadata: "\(logContext.metadata) total_ocr_ms=\(durationMS(since: startedAt)) ocr_prepare_wait_ms=\(prepareMS) ocr_generation_ms=\(generationMS) images=\(images.count)",
-                error: error.localizedDescription
-            )
-            throw error
-        }
-
-        let context = Self.screenContext(fromOCRText: output)
-        DebugLog.providerEvent(
-            phase: "success",
-            service: "local_lighton_ocr_screen_extraction",
-            model: LocalProcessorStatus.ocrModel.id,
-            metadata: "\(logContext.metadata) total_ocr_ms=\(durationMS(since: startedAt)) ocr_prepare_wait_ms=\(prepareMS) ocr_generation_ms=\(generationMS) images=\(images.count) has_screen_context=\(context.hasScreenContext)",
-            payloadPreview: output
-        )
-        return context
-    }
-
-    nonisolated static func screenContext(fromOCRText rawText: String) -> LocalScreenContext {
-        let text = rawText
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .nilIfEmpty
-        return LocalScreenContext(
-            hasScreenContext: text != nil,
-            screenText: text,
-            screenDescription: nil
-        )
-    }
-
-    private func generateOCRText(
-        prompt: String,
-        images: [LocalImageInput],
-        maxTokens: Int,
-        ensurePrepared: Bool = true
-    ) async throws -> String {
-        if ensurePrepared {
-            try await prepare()
-        }
-        guard let container else {
-            throw LocalAIServiceError.invalidResponse("Local LightOnOCR model")
-        }
-
-        let userImages = try images.map { image -> UserInput.Image in
-            guard let ciImage = CIImage(data: image.data) else {
-                throw LocalAIServiceError.invalidResponse("Local LightOnOCR image input")
-            }
-            return .ciImage(ciImage)
-        }
-        let parameters = GenerateParameters(maxTokens: maxTokens, temperature: 0.0, topP: 1)
-        nonisolated(unsafe) let capturedImages = userImages
-        nonisolated(unsafe) let session = ChatSession(
-            container,
-            generateParameters: parameters,
-            processing: .init(resize: nil)
-        )
-        return try await session
-            .respond(to: prompt, images: capturedImages, videos: [])
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private func durationMS(since startedAt: Date) -> Int {
-        Int(Date().timeIntervalSince(startedAt) * 1000)
-    }
-
-    private static func patchLightOnProcessorConfigIfNeeded(at modelDirectory: URL) throws {
-        try patchLightOnProcessorConfigFileIfNeeded(
-            at: modelDirectory.appendingPathComponent("processor_config.json")
-        )
-        try patchLightOnProcessorConfigFileIfNeeded(
-            at: modelDirectory.appendingPathComponent("preprocessor_config.json")
-        )
-    }
-
-    private static func patchLightOnProcessorConfigFileIfNeeded(at url: URL) throws {
-        guard FileManager.default.fileExists(atPath: url.path) else { return }
-        let data = try Data(contentsOf: url)
-        guard var object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-        guard object["processor_class"] as? String == "LightOnOCRProcessor" else { return }
-
-        if object["image_processor"] == nil {
-            let imageProcessor = object
-            object = [
-                "processor_class": "LightOnOCRProcessor",
-                "image_processor": imageProcessor,
-                "image_token": "<|image_pad|>",
-                "patch_size": imageProcessor["patch_size"] ?? 14,
-                "spatial_merge_size": 2,
-            ]
-        } else if object["image_token"] == nil {
-            object["image_token"] = "<|image_pad|>"
-            object["patch_size"] = object["patch_size"] ?? 14
-            object["spatial_merge_size"] = object["spatial_merge_size"] ?? 2
-        } else {
-            return
-        }
-
-        let patched = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
-        try patched.write(to: url, options: .atomic)
     }
 }
 
@@ -781,9 +616,12 @@ final class LocalGemmaService {
             payloadPreview: output
         )
 
-        return stripThinkingBlocks(from: output)
+        let cleaned = stripThinkingBlocks(from: output)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-            .nilIfEmpty ?? fallbackTranscript
+        guard !cleaned.isEmpty else {
+            throw LocalAIServiceError.invalidResponse("Local Gemma transcript enhancer empty output")
+        }
+        return cleaned
     }
 
     func runWorkingAgent(request envelope: ElsonRequestEnvelope) async throws -> AgentDecision {
@@ -796,74 +634,55 @@ final class LocalGemmaService {
             attachmentSummary: attachmentSummary(from: envelope.attachments)
         )
         let images = imageInputs(from: envelope.attachments)
+        let startedAt = Date()
+        DebugLog.providerEvent(
+            phase: "start",
+            service: "local_gemma_e2b_working_agent",
+            model: LocalProcessorStatus.gemmaModel.rawValue,
+            metadata: "request_id=\(envelope.requestId) thread_id=\(envelope.threadId) surface=\(envelope.surface) input_source=\(envelope.inputSource) images=\(images.count) thinking=enabled",
+            payloadPreview: userPrompt
+        )
         let output: String
-        if images.isEmpty || !Self.multimodalContainerEnabled {
-            output = try await generateText(
-                systemPrompt: systemPrompt,
-                userPrompt: userPrompt,
-                temperature: 0.1,
-                maxTokens: 1200
+        do {
+            if images.isEmpty || !Self.multimodalContainerEnabled {
+                output = try await generateText(
+                    systemPrompt: systemPrompt,
+                    userPrompt: userPrompt,
+                    temperature: 0.1,
+                    maxTokens: 1200
+                )
+            } else {
+                output = try await generateMultimodalText(
+                    systemPrompt: systemPrompt,
+                    userPrompt: userPrompt,
+                    images: images,
+                    temperature: 0.1,
+                    maxTokens: 1200,
+                    thinkingMode: .enabled
+                )
+            }
+        } catch {
+            DebugLog.providerEvent(
+                phase: "error",
+                service: "local_gemma_e2b_working_agent",
+                model: LocalProcessorStatus.gemmaModel.rawValue,
+                metadata: "request_id=\(envelope.requestId) thread_id=\(envelope.threadId) surface=\(envelope.surface) input_source=\(envelope.inputSource) images=\(images.count) thinking=enabled total_agent_ms=\(durationMS(since: startedAt))",
+                payloadPreview: error.localizedDescription
             )
-        } else {
-            output = try await generateMultimodalText(
-                systemPrompt: systemPrompt,
-                userPrompt: userPrompt,
-                images: images,
-                temperature: 0.1,
-                maxTokens: 1200,
-                thinkingMode: .enabled
-            )
+            throw error
         }
+        DebugLog.providerEvent(
+            phase: "success",
+            service: "local_gemma_e2b_working_agent",
+            model: LocalProcessorStatus.gemmaModel.rawValue,
+            metadata: "request_id=\(envelope.requestId) thread_id=\(envelope.threadId) surface=\(envelope.surface) input_source=\(envelope.inputSource) images=\(images.count) thinking=enabled total_agent_ms=\(durationMS(since: startedAt)) output_chars=\(output.count)",
+            payloadPreview: output
+        )
 
         guard let jsonData = LocalAIService().extractJSONData(from: output) else {
             throw LocalAIServiceError.invalidResponse("Local Gemma Working Agent")
         }
         return LocalAIService().normalizedAgentDecision(from: jsonData)
-    }
-
-    func extractScreenContext(
-        images: [LocalImageInput],
-        myElsonMarkdown: String,
-        logContext: LocalRequestLogContext
-    ) async throws -> LocalScreenContext {
-        guard !images.isEmpty else { return .none }
-        guard Self.multimodalContainerEnabled else {
-            DebugLog.runtimeError("local_gemma_screen_extraction_skipped reason=multimodal_container_disabled images=\(images.count)")
-            return .none
-        }
-
-        let systemPrompt = ElsonPromptCatalog.screenExtractorSystemPrompt(
-            wordsGlossaryMarkdown: MyElsonDocument.wordsGlossaryMarkdown(from: myElsonMarkdown)
-        )
-        let userPrompt = ElsonPromptCatalog.screenExtractorUserPrompt()
-        let output = try await generateMultimodalText(
-            systemPrompt: systemPrompt,
-            userPrompt: userPrompt,
-            images: images,
-            temperature: 0.1,
-            maxTokens: 500
-        )
-
-        guard let jsonData = LocalAIService().extractJSONData(from: output) else {
-            throw LocalAIServiceError.invalidResponse("Local Gemma screen extraction")
-        }
-        let decoded = try JSONDecoder().decode(LocalGemmaScreenExtractionResponse.self, from: jsonData)
-        let screenText = decoded.screenText?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let screenDescription = decoded.screenDescription?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let context = LocalScreenContext(
-            hasScreenContext: !(screenText?.isEmpty ?? true) || !(screenDescription?.isEmpty ?? true),
-            screenText: screenText?.nilIfEmpty,
-            screenDescription: screenDescription?.nilIfEmpty
-        )
-
-        DebugLog.providerEvent(
-            phase: "success",
-            service: "local_gemma_screen_extraction",
-            model: LocalProcessorStatus.gemmaModel.rawValue,
-            metadata: "\(logContext.metadata) images=\(images.count) has_screen_context=\(context.hasScreenContext)",
-            payloadPreview: output
-        )
-        return context
     }
 
     private func generateText(
@@ -1064,6 +883,8 @@ final class LocalGemmaService {
 }
 
 enum LocalProcessingRouter {
+    private static let commandLLMWarmupDelayNanoseconds: UInt64 = 2_500_000_000
+
     static func audioBackend(for config: ElsonLocalConfig) -> LocalProcessingAudioBackend {
         config.runtimeMode == .local ? .fluidAudio : .groq
     }
@@ -1111,33 +932,21 @@ enum LocalProcessingRouter {
     static func prepareLocalProcessor(
         progress: (@MainActor @Sendable (LocalProcessorProgress) -> Void)? = nil
     ) async throws -> LocalProcessorStatus {
+        try LocalProcessorASRCache.prepareStorage()
         try LocalProcessorModelCache.removeStaleModels()
 
         await progress?(.fluidAudioStarting())
-        let fluidAudioCache = AsrModels.defaultCacheDirectory(for: .v3)
-        if !AsrModels.modelsExist(at: fluidAudioCache) {
-            _ = try await DownloadUtils.downloadRepo(
-                .parakeetV3,
-                to: fluidAudioCache.deletingLastPathComponent(),
-                variant: ParakeetEncoderPrecision.int8.rawValue
+        let fluidAudioCache = LocalProcessorPaths.fluidAudioASRModelDirectory
+        if !AsrModels.modelsExist(at: fluidAudioCache, version: .v3, encoderPrecision: .int8) {
+            _ = try await AsrModels.download(
+                to: fluidAudioCache,
+                version: .v3,
+                encoderPrecision: .int8
             ) { fluidProgress in
                 Task { @MainActor in
                     progress?(.fluidAudio(fluidProgress))
                 }
             }
-        }
-
-        await progress?(.ocrStarting())
-        try LocalProcessorModelCache.prepareDownloadRoot()
-        if !LocalProcessorModelCache.isDownloaded(LocalProcessorStatus.ocrModel) {
-            _ = try await Gemma4ModelDownloader.download(
-                modelId: LocalProcessorStatus.ocrModel.id,
-                progress: { modelProgress in
-                    Task { @MainActor in
-                        progress?(.ocrDownload(modelProgress))
-                    }
-                }
-            )
         }
 
         await progress?(.gemmaStarting())
@@ -1176,10 +985,11 @@ enum LocalProcessingRouter {
         try LocalProcessorModelCache.removeStaleModels()
         DebugLog.runtime("local_processor_command_warmup_started mode=\(mode.rawValue) target=\(target)")
 
-        async let audioWarmup: Void = warmFluidAudio(progress: progress)
-        async let llmWarmup: Void = warmCommandLLM(target: target, config: config, progress: progress)
-        try await audioWarmup
-        try await llmWarmup
+        try await warmFluidAudio(progress: progress)
+        if target != .none {
+            try await Task.sleep(nanoseconds: commandLLMWarmupDelayNanoseconds)
+        }
+        try await warmCommandLLM(target: target, config: config, progress: progress)
 
         DebugLog.runtime("local_processor_command_warmup_completed mode=\(mode.rawValue) target=\(target)")
         return LocalProcessorStatus.current()
@@ -1217,25 +1027,7 @@ enum LocalProcessingRouter {
     private static func warmTranscriptEnhancer(
         progress: (@MainActor @Sendable (LocalProcessorProgress) -> Void)? = nil
     ) async throws {
-        async let ocrWarmup: Void = warmOCR(progress: progress)
-        async let gemmaWarmup: Void = warmGemmaForTranscriptEnhancer(progress: progress)
-
-        do {
-            try await gemmaWarmup
-        } catch {
-            do {
-                try await ocrWarmup
-            } catch {
-                DebugLog.runtimeError("local_processor_warmup_stage stage=lighton_ocr_load_failed_during_gemma_failure error=\(error.localizedDescription)")
-            }
-            throw error
-        }
-
-        do {
-            try await ocrWarmup
-        } catch {
-            DebugLog.runtimeError("local_processor_warmup_stage stage=lighton_ocr_load_failed continued=true error=\(error.localizedDescription)")
-        }
+        try await warmGemmaForTranscriptEnhancer(progress: progress)
     }
 
     private static func warmGemmaForTranscriptEnhancer(
@@ -1257,32 +1049,6 @@ enum LocalProcessingRouter {
             }
         )
         DebugLog.runtime("local_processor_warmup_stage stage=transcript_llm_load_completed gemma_load_ms=\(durationMS(since: startedAt))")
-    }
-
-    private static func warmOCR(
-        progress: (@MainActor @Sendable (LocalProcessorProgress) -> Void)? = nil
-    ) async throws {
-        let startedAt = Date()
-        DebugLog.runtime("local_processor_warmup_stage stage=lighton_ocr_load_started")
-        await progress?(.ocrStarting())
-        do {
-            try await LocalLightOnOCRService.shared.prepare(
-                progress: { modelProgress in
-                    Task { @MainActor in
-                        progress?(.ocrDownload(modelProgress))
-                    }
-                },
-                loadStarted: {
-                    Task { @MainActor in
-                        progress?(.ocrLoading())
-                    }
-                }
-            )
-            DebugLog.runtime("local_processor_warmup_stage stage=lighton_ocr_load_completed ocr_load_ms=\(durationMS(since: startedAt))")
-        } catch {
-            DebugLog.runtimeError("local_processor_warmup_stage stage=lighton_ocr_load_failed ocr_load_ms=\(durationMS(since: startedAt)) error=\(error.localizedDescription)")
-            throw error
-        }
     }
 
     private static func warmWorkingAgent(
@@ -1396,17 +1162,10 @@ enum LocalProcessingRouter {
     ) async throws -> LocalScreenContext {
         switch config.runtimeMode {
         case .local:
-            if stage == .transcriptEnhancer {
-                return try await LocalLightOnOCRService.shared.extractScreenContext(
-                    images: images,
-                    logContext: logContext
-                )
-            }
-            return try await LocalGemmaService.shared.extractScreenContext(
-                images: images,
-                myElsonMarkdown: myElsonMarkdown,
-                logContext: logContext
+            DebugLog.runtime(
+                "screen_context_stage request_id=\(logContext.requestId) thread_id=\(logContext.threadId) stage=\(stage.rawValue) provider=local ocr=removed images=\(images.count)"
             )
+            return .none
         case .hosted:
             return try await LocalAIService().extractScreenContext(
                 images: images,
@@ -1466,16 +1225,6 @@ enum LocalTranscriptEnhancerPromptBuilder {
         return attachments.map { attachment in
             "\(attachment.kind) | \(attachment.name) | \(attachment.mime) | source=\(attachment.source)"
         }.joined(separator: "\n")
-    }
-}
-
-private struct LocalGemmaScreenExtractionResponse: Decodable {
-    let screenText: String?
-    let screenDescription: String?
-
-    enum CodingKeys: String, CodingKey {
-        case screenText = "screen_text"
-        case screenDescription = "screen_description"
     }
 }
 

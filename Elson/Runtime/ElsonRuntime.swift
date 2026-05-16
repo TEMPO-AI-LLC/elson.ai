@@ -150,6 +150,7 @@ final class ElsonRuntime: @unchecked Sendable {
         let resolvedRequestId = requestId ?? UUID().uuidString
         let requestAttachments = makeAttachmentsPayload(attachments: attachments, screenshotJPEGData: screenshotJPEGData)
         let transcriptionStartedAt = Date()
+        let transcriptionStage: RequestTimelineStage = config.runtimeMode == .local ? .audioTranscription : .groqTranscription
         DebugLog.requestStageStart(
             RequestTimelineSnapshot(
                 requestId: resolvedRequestId,
@@ -157,7 +158,7 @@ final class ElsonRuntime: @unchecked Sendable {
                 surface: surface,
                 inputSource: "audio"
             ),
-            stage: .groqTranscription
+            stage: transcriptionStage
         )
         let rawTranscript = try await LocalProcessingRouter.transcribe(
             audioURL: audioURL,
@@ -177,7 +178,7 @@ final class ElsonRuntime: @unchecked Sendable {
                 surface: surface,
                 inputSource: "audio"
             ),
-            stage: .groqTranscription,
+            stage: transcriptionStage,
             durationMS: transcriptionDurationMS
         )
         return try await processAudioTranscript(
@@ -198,13 +199,15 @@ final class ElsonRuntime: @unchecked Sendable {
                 threadId: threadId,
                 surface: surface,
                 inputSource: "audio"
-            ).addingStage(.groqTranscription, durationMS: transcriptionDurationMS, countTowardProvider: true)
+            ).addingStage(transcriptionStage, durationMS: transcriptionDurationMS, countTowardProvider: true)
         )
     }
 
     func processAudioTranscript(
         requestId: String? = nil,
         rawTranscript: String,
+        transcriptContext: String? = nil,
+        agentIntentTranscript: String? = nil,
         snippetCount: Int?,
         transcriptChunkTimings: [ElsonTranscriptChunkTimingPayload] = [],
         mode: InteractionMode,
@@ -223,6 +226,8 @@ final class ElsonRuntime: @unchecked Sendable {
         return try await processAudioTranscript(
             requestId: resolvedRequestId,
             rawTranscript: rawTranscript,
+            transcriptContext: transcriptContext,
+            agentIntentTranscript: agentIntentTranscript,
             snippetCount: snippetCount,
             transcriptChunkTimings: transcriptChunkTimings,
             inputSource: "audio",
@@ -247,6 +252,8 @@ final class ElsonRuntime: @unchecked Sendable {
     func processAudioTranscriptWithRetry(
         requestId: String? = nil,
         rawTranscript: String,
+        transcriptContext: String? = nil,
+        agentIntentTranscript: String? = nil,
         snippetCount: Int?,
         transcriptChunkTimings: [ElsonTranscriptChunkTimingPayload] = [],
         mode: InteractionMode,
@@ -269,6 +276,8 @@ final class ElsonRuntime: @unchecked Sendable {
                 return try await processAudioTranscript(
                     requestId: resolvedRequestId,
                     rawTranscript: rawTranscript,
+                    transcriptContext: transcriptContext,
+                    agentIntentTranscript: agentIntentTranscript,
                     snippetCount: snippetCount,
                     transcriptChunkTimings: transcriptChunkTimings,
                     mode: mode,
@@ -392,6 +401,8 @@ final class ElsonRuntime: @unchecked Sendable {
     private func processExplicitShortcutAudioTranscript(
         requestId: String,
         rawTranscript: String,
+        transcriptContext: String?,
+        agentIntentTranscript: String?,
         snippetCount: Int?,
         transcriptChunkTimings: [ElsonTranscriptChunkTimingPayload],
         mode: InteractionMode,
@@ -414,7 +425,9 @@ final class ElsonRuntime: @unchecked Sendable {
         )
 
         let initialScreenContext: LocalScreenContext
-        if let prefetchedDeciderScreenContext {
+        if config.runtimeMode == .local {
+            initialScreenContext = prefetchedDeciderScreenContext ?? .none
+        } else if let prefetchedDeciderScreenContext {
             initialScreenContext = prefetchedDeciderScreenContext
         } else {
             DebugLog.requestStageStart(timeline, stage: .screenContext)
@@ -443,6 +456,8 @@ final class ElsonRuntime: @unchecked Sendable {
                 let request = makeRequestEnvelope(
                     requestId: requestId,
                     rawTranscript: rawTranscript,
+                    transcriptContext: transcriptContext,
+                    agentIntentTranscript: agentIntentTranscript,
                     enhancedTranscript: rawTranscript,
                     snippetCount: snippetCount,
                     transcriptChunkTimings: transcriptChunkTimings,
@@ -479,7 +494,11 @@ final class ElsonRuntime: @unchecked Sendable {
             : "Transcript shortcut selected."
 
         var finalScreenContext = initialScreenContext
-        if mode == .agent, !finalScreenContext.hasScreenContext {
+        if config.runtimeMode == .local,
+           mode == .agent,
+           requestAttachments.contains(where: { $0.kind == "image" || $0.mime.lowercased().hasPrefix("image/") }) {
+            finalScreenContext = LocalScreenContext(hasScreenContext: true, screenText: nil, screenDescription: nil)
+        } else if config.runtimeMode != .local, mode == .agent, !finalScreenContext.hasScreenContext {
             DebugLog.requestStageStart(timeline, stage: .screenContext)
             let screenContextStartedAt = Date()
             finalScreenContext = try await screenContextForStage(
@@ -512,6 +531,8 @@ final class ElsonRuntime: @unchecked Sendable {
         return try await processTranscript(
             requestId: requestId,
             rawTranscript: rawTranscript,
+            transcriptContext: transcriptContext,
+            agentIntentTranscript: agentIntentTranscript,
             enhancedTranscript: rawTranscript,
             snippetCount: snippetCount,
             transcriptChunkTimings: transcriptChunkTimings,
@@ -578,6 +599,8 @@ final class ElsonRuntime: @unchecked Sendable {
     private func processAudioTranscript(
         requestId: String,
         rawTranscript: String,
+        transcriptContext: String? = nil,
+        agentIntentTranscript: String? = nil,
         snippetCount: Int?,
         transcriptChunkTimings: [ElsonTranscriptChunkTimingPayload],
         inputSource: String,
@@ -601,6 +624,8 @@ final class ElsonRuntime: @unchecked Sendable {
             return try await processExplicitShortcutAudioTranscript(
                 requestId: requestId,
                 rawTranscript: trimmedRawTranscript,
+                transcriptContext: transcriptContext,
+                agentIntentTranscript: agentIntentTranscript,
                 snippetCount: snippetCount,
                 transcriptChunkTimings: transcriptChunkTimings,
                 mode: mode,
@@ -789,6 +814,8 @@ final class ElsonRuntime: @unchecked Sendable {
     private func processTranscript(
         requestId: String,
         rawTranscript: String?,
+        transcriptContext: String? = nil,
+        agentIntentTranscript: String? = nil,
         enhancedTranscript: String,
         snippetCount: Int?,
         transcriptChunkTimings: [ElsonTranscriptChunkTimingPayload] = [],
@@ -818,6 +845,7 @@ final class ElsonRuntime: @unchecked Sendable {
         let currentMyElsonMarkdown = currentMyElsonMarkdown(from: config)
         var timeline = initialTimeline
         let provider = effectiveMode == .agent ? agentProvider() : transcriptProvider()
+        let providerLabel = config.runtimeMode == .local ? "local" : provider.rawValue
         let selectedSkill: SelectedSkillPayload?
 
         if effectiveMode == .agent, config.skillsEnabled {
@@ -890,6 +918,8 @@ final class ElsonRuntime: @unchecked Sendable {
         let request = makeRequestEnvelope(
             requestId: requestId,
             rawTranscript: rawTranscript,
+            transcriptContext: transcriptContext,
+            agentIntentTranscript: agentIntentTranscript,
             enhancedTranscript: enhancedTranscript,
             snippetCount: snippetCount,
             transcriptChunkTimings: transcriptChunkTimings,
@@ -909,13 +939,13 @@ final class ElsonRuntime: @unchecked Sendable {
             selectedSkill: selectedSkill
         )
         DebugLog.runtime(
-            "request_envelope_created request_id=\(requestId) thread_id=\(threadId) surface=\(surface) input_source=\(inputSource) mode_hint=\(request.modeHint) attachments=\(requestAttachments.count) has_screen_context=\(screenContext.hasScreenContext) provider=\(provider.rawValue) selected_skill=\(selectedSkill?.name ?? "none") thread_decision=\(threadDecision?.rawValue ?? "none") reply_relation=\(replyRelation?.rawValue ?? "none")"
+            "request_envelope_created request_id=\(requestId) thread_id=\(threadId) surface=\(surface) input_source=\(inputSource) mode_hint=\(request.modeHint) attachments=\(requestAttachments.count) has_screen_context=\(screenContext.hasScreenContext) provider=\(providerLabel) selected_skill=\(selectedSkill?.name ?? "none") thread_decision=\(threadDecision?.rawValue ?? "none") reply_relation=\(replyRelation?.rawValue ?? "none")"
         )
         let response: ElsonResponseEnvelope
 
         if effectiveMode == .agent {
             DebugLog.routingDecision(
-                "thread_id=\(threadId) surface=\(surface) input_source=\(inputSource) mode=working_agent provider=\(provider.rawValue) transcript_chars=\(enhancedTranscript.count) clipboard_present=\(((clipboardText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) == false)) attachments=\(requestAttachments.count) has_screen_context=\(screenContext.hasScreenContext) route=working_agent"
+                "thread_id=\(threadId) surface=\(surface) input_source=\(inputSource) mode=working_agent provider=\(providerLabel) transcript_chars=\(enhancedTranscript.count) clipboard_present=\(((clipboardText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) == false)) attachments=\(requestAttachments.count) has_screen_context=\(screenContext.hasScreenContext) route=working_agent"
             )
             do {
                 DebugLog.requestStageStart(timeline, stage: .workingAgent)
@@ -926,7 +956,7 @@ final class ElsonRuntime: @unchecked Sendable {
                 timeline = timeline.addingStage(.workingAgent, durationMS: workingAgentDurationMS, countTowardProvider: true)
             } catch {
                 DebugLog.routingDecision(
-                    "thread_id=\(threadId) mode=working_agent provider=\(provider.rawValue) route=working_agent_failed error=\(error.localizedDescription)"
+                    "thread_id=\(threadId) mode=working_agent provider=\(providerLabel) route=working_agent_failed error=\(error.localizedDescription)"
                 )
                 throw error
             }
@@ -958,7 +988,7 @@ final class ElsonRuntime: @unchecked Sendable {
         } else if inputSource == "audio" {
             let trimmedAudioReason = audioDirectDebugReason?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             DebugLog.routingDecision(
-                "thread_id=\(threadId) surface=\(surface) input_source=\(inputSource) mode=transcript provider=\(provider.rawValue) transcript_chars=\(enhancedTranscript.count) clipboard_present=\(((clipboardText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) == false)) attachments=\(requestAttachments.count) has_screen_context=\(screenContext.hasScreenContext) route=transcript_agent reason=\(trimmedAudioReason.isEmpty ? "none" : trimmedAudioReason)"
+                "thread_id=\(threadId) surface=\(surface) input_source=\(inputSource) mode=transcript provider=\(providerLabel) transcript_chars=\(enhancedTranscript.count) clipboard_present=\(((clipboardText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) == false)) attachments=\(requestAttachments.count) has_screen_context=\(screenContext.hasScreenContext) route=transcript_agent reason=\(trimmedAudioReason.isEmpty ? "none" : trimmedAudioReason)"
             )
             DebugLog.requestStageStart(timeline, stage: .localTranscript)
             let transcriptAgentStartedAt = Date()
@@ -977,7 +1007,7 @@ final class ElsonRuntime: @unchecked Sendable {
             )
         } else {
             DebugLog.routingDecision(
-                "thread_id=\(threadId) surface=\(surface) input_source=\(inputSource) mode=transcript provider=\(provider.rawValue) transcript_chars=\(enhancedTranscript.count) clipboard_present=\(((clipboardText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) == false)) attachments=\(requestAttachments.count) has_screen_context=\(screenContext.hasScreenContext) route=transcript_agent"
+                "thread_id=\(threadId) surface=\(surface) input_source=\(inputSource) mode=transcript provider=\(providerLabel) transcript_chars=\(enhancedTranscript.count) clipboard_present=\(((clipboardText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) == false)) attachments=\(requestAttachments.count) has_screen_context=\(screenContext.hasScreenContext) route=transcript_agent"
             )
             DebugLog.requestStageStart(timeline, stage: .localTranscript)
             let localTranscriptStartedAt = Date()
@@ -1022,6 +1052,8 @@ final class ElsonRuntime: @unchecked Sendable {
     private func makeRequestEnvelope(
         requestId: String,
         rawTranscript: String?,
+        transcriptContext: String? = nil,
+        agentIntentTranscript: String? = nil,
         enhancedTranscript: String,
         snippetCount: Int?,
         transcriptChunkTimings: [ElsonTranscriptChunkTimingPayload] = [],
@@ -1055,6 +1087,8 @@ final class ElsonRuntime: @unchecked Sendable {
             enhancedTranscript: enhancedTranscript,
             transcriptSnippetCount: snippetCount,
             transcriptChunkTimings: transcriptChunkTimings,
+            transcriptContext: transcriptContext,
+            agentIntentTranscript: agentIntentTranscript,
             myElsonMarkdown: myElsonMarkdown,
             transcriptAgentPrompt: transcriptAgentPrompt,
             workingAgentPrompt: workingAgentPrompt,

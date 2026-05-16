@@ -91,6 +91,7 @@ struct RecordingShortcut: Codable, Equatable, Hashable {
 
     static let `default` = RecordingShortcut(modifiers: [.function])
     static let feedbackDefault = RecordingShortcut(modifiers: [.shift, .function])
+    static let localDualPhaseDefault = RecordingShortcut(modifiers: [.command, .option])
 
     static func from(carbonModifiers: UInt32) -> RecordingShortcut {
         var modifiers: [ShortcutModifier] = []
@@ -214,10 +215,10 @@ struct ElsonLocalConfig: Codable, Equatable {
         autoPaste: true,
         copyTranscriptToClipboard: false,
         restoreOriginalClipboardAfterPaste: false,
-        transcriptScreenOCR: true,
+        transcriptScreenOCR: false,
         fullScreenScreenshotCapture: false,
         listeningMode: .hold,
-        transcriptShortcut: .default,
+        transcriptShortcut: .localDualPhaseDefault,
         agentShortcut: .feedbackDefault,
         recordingShortcut: .default,
         runtimeMode: .local,

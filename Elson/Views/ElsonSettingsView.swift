@@ -432,34 +432,53 @@ struct ElsonSettingsView: View {
 
             ElsonSettingsCard(title: "Shortcuts") {
                 VStack(spacing: 18) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Transcript Shortcut")
-                            .font(.system(size: 13, weight: .semibold))
-                        RecordingShortcutCaptureButton(shortcut: $appSettings.transcriptShortcut)
-                    }
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Agent Shortcut")
-                            .font(.system(size: 13, weight: .semibold))
-                        RecordingShortcutCaptureButton(shortcut: $appSettings.agentShortcut)
-                    }
-
-                    if appSettings.hasShortcutConflict {
-                        Text("Transcript and Agent shortcuts must differ.")
+                    if appSettings.runtimeMode == .local {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Local Gesture")
+                                .font(.system(size: 13, weight: .semibold))
+                            HStack(spacing: 6) {
+                                ForEach(RecordingShortcut.localDualPhaseDefault.symbolTokens, id: \.self) { token in
+                                    Text(token)
+                                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                                        .frame(minWidth: 32, minHeight: 28)
+                                        .background(.secondary.opacity(0.16), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                                }
+                            }
+                        }
+                        Text("Release both for Transcript. Release command first, keep option held, then release option for Agent.")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
-                        Text("Both shortcuts save instantly.")
-                            .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Transcript Shortcut")
+                                .font(.system(size: 13, weight: .semibold))
+                            RecordingShortcutCaptureButton(shortcut: $appSettings.transcriptShortcut)
+                        }
 
-                    if appSettings.transcriptShortcut == RecordingShortcut(modifiers: [.function]) || appSettings.agentShortcut == RecordingShortcut(modifiers: [.function]) {
-                        Link("fn may open Emoji & Symbols. Open Keyboard Settings.", destination: URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension")!)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Agent Shortcut")
+                                .font(.system(size: 13, weight: .semibold))
+                            RecordingShortcutCaptureButton(shortcut: $appSettings.agentShortcut)
+                        }
+
+                        if appSettings.hasShortcutConflict {
+                            Text("Transcript and Agent shortcuts must differ.")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            Text("Both shortcuts save instantly.")
+                                .font(.system(size: 13))
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
+                        if appSettings.transcriptShortcut == RecordingShortcut(modifiers: [.function]) || appSettings.agentShortcut == RecordingShortcut(modifiers: [.function]) {
+                            Link("fn may open Emoji & Symbols. Open Keyboard Settings.", destination: URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension")!)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
@@ -802,11 +821,8 @@ struct ElsonSettingsView: View {
 
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 10) {
-                            Label("FluidAudio", systemImage: appSettings.localProcessorStatus.fluidAudioReady ? "checkmark.circle.fill" : "arrow.down.circle")
+                            Label("FluidAudio v3", systemImage: appSettings.localProcessorStatus.fluidAudioReady ? "checkmark.circle.fill" : "arrow.down.circle")
                             Label(LocalProcessorStatus.sharedGemmaDisplayName, systemImage: appSettings.localProcessorStatus.gemmaReady ? "checkmark.circle.fill" : "arrow.down.circle")
-                        }
-                        HStack(spacing: 10) {
-                            Label(LocalProcessorStatus.ocrScreenTextDisplayName, systemImage: appSettings.localProcessorStatus.ocrReady ? "checkmark.circle.fill" : "arrow.down.circle")
                         }
                     }
                     .font(.system(size: 12, weight: .semibold))
@@ -871,7 +887,7 @@ struct ElsonSettingsView: View {
     private var transcriptModePipelineText: String {
         switch appSettings.runtimeMode {
         case .local:
-            return "FluidAudio ASR + LightOnOCR + Gemma 4 E2B"
+            return "FluidAudio ASR + Gemma 4 E2B"
         case .hosted:
             return "Groq STT + OCR, then Cerebras"
         }

@@ -43,7 +43,6 @@ let package = Package(
         .executable(name: "Elson", targets: ["Elson"]),
         .executable(name: "GemmaTextSmoke", targets: ["GemmaTextSmoke"]),
         .executable(name: "GemmaImageSmoke", targets: ["GemmaImageSmoke"]),
-        .executable(name: "LightOnOCRSmoke", targets: ["LightOnOCRSmoke"]),
     ],
     dependencies: [
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui.git", from: "2.0.0"),
@@ -62,7 +61,6 @@ let package = Package(
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
-                .product(name: "MLXVLM", package: "mlx-swift-lm"),
                 .product(name: "MLXRandom", package: "mlx-swift"),
             ],
             path: "Elson",
@@ -116,8 +114,10 @@ let package = Package(
                 "Services/AIService.swift",
                 "Services/KeyboardService.swift",
                 "Services/LocalCapturedAudioSessionStore.swift",
-                "Services/LocalChunkedAudioSession.swift",
-                "Services/LocalChunkedAudioRetryStore.swift",
+                "Services/HostedChunkedAudioSession.swift",
+                "Services/HostedChunkedAudioRetryStore.swift",
+                "Services/LocalVoiceRecorder.swift",
+                "Services/LocalVoiceRunCoordinator.swift",
                 "Services/PermissionCoordinator.swift",
                 "Services/ScreenSnapshotService.swift",
                 "Services/SkillCatalogStore.swift",
@@ -177,16 +177,6 @@ let package = Package(
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
             ],
             path: "Tools/GemmaImageSmoke"
-        ),
-        .executableTarget(
-            name: "LightOnOCRSmoke",
-            dependencies: [
-                .product(name: "Gemma4Swift", package: "gemma-4-swift-mlx"),
-                .product(name: "MLX", package: "mlx-swift"),
-                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
-                .product(name: "MLXVLM", package: "mlx-swift-lm"),
-            ],
-            path: "Tools/LightOnOCRSmoke"
         ),
     ]
 )

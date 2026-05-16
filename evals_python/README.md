@@ -133,3 +133,7 @@ Per case, the report includes:
 ## Lighteval note
 
 This package depends on `lighteval` and records the installed framework version in reports. The replay adapter is intentionally custom because Elson's Intent Agent decision is a provider-specific multimodal API call rather than a generic benchmark task.
+
+## Local Agent Seed Cases
+
+New local Gemma E2B Agent Mode failures are collected in `fixtures/local-agent/local_agent_cases.csv`. This CSV is not executed by the retired harness; append rows there until the dedicated local working-agent regression lane is implemented.

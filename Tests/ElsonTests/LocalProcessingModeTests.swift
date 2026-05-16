@@ -72,6 +72,13 @@ final class LocalProcessingModeTests: XCTestCase {
         XCTAssertNotEqual(settings.firstIncompleteInstallOnboardingStep, .apiKeys)
     }
 
+    func testLocalOnboardingUsesSingleShortcutStep() {
+        XCTAssertTrue(InstallOnboardingStep.visibleSteps(for: .local).contains(.transcriptShortcut))
+        XCTAssertFalse(InstallOnboardingStep.visibleSteps(for: .local).contains(.agentShortcut))
+        XCTAssertTrue(InstallOnboardingStep.visibleSteps(for: .hosted).contains(.transcriptShortcut))
+        XCTAssertTrue(InstallOnboardingStep.visibleSteps(for: .hosted).contains(.agentShortcut))
+    }
+
     @MainActor
     func testMakeLocalConfigPersistsRuntimeMode() {
         let settings = AppSettings()
@@ -92,13 +99,9 @@ final class LocalProcessingModeTests: XCTestCase {
         XCTAssertTrue(LocalProcessingRouter.audioTranscriber(for: localConfig) is FluidAudioTranscriber)
         XCTAssertEqual(LocalProcessorStatus.transcriptEnhancerModel.id, "mlx-community/gemma-4-e2b-it-4bit")
         XCTAssertEqual(LocalProcessorStatus.gemmaModel, .e2b4bit)
-        XCTAssertEqual(LocalProcessorStatus.ocrModel.id, "mlx-community/LightOnOCR-1B-1025-4bit")
         XCTAssertEqual(
             LocalProcessorStatus.activeLLMModelIDs,
-            [
-                LocalProcessorStatus.gemmaModel.rawValue,
-                LocalProcessorStatus.ocrModel.id,
-            ]
+            [LocalProcessorStatus.gemmaModel.rawValue]
         )
         XCTAssertFalse(LocalProcessorStatus.activeLLMModelIDs.contains("prism-ml/Ternary-Bonsai-8B-mlx-2bit"))
         XCTAssertFalse(LocalProcessorStatus.activeLLMModelIDs.contains("mlx-community/gemma-4-e4b-it-4bit"))
@@ -111,18 +114,18 @@ final class LocalProcessingModeTests: XCTestCase {
         XCTAssertTrue(LocalProcessingRouter.audioTranscriber(for: hostedConfig) is LocalAIService)
     }
 
-    func testProcessingProfilesKeepLocalEnhancerOCRTextAndAgentMultimodal() {
+    func testProcessingProfilesKeepLocalTextOnlyAndHostedFullContext() {
         let localTranscript = LocalProcessingRouter.contextProfile(runtimeMode: .local, mode: .transcription)
-        XCTAssertTrue(localTranscript.shouldPrefetchScreenContext)
-        XCTAssertTrue(localTranscript.shouldResolveScreenContext(for: .transcriptEnhancer))
-        XCTAssertTrue(localTranscript.shouldResolveScreenContext(for: .shortcutPrefetch))
+        XCTAssertFalse(localTranscript.shouldPrefetchScreenContext)
+        XCTAssertFalse(localTranscript.shouldResolveScreenContext(for: .transcriptEnhancer))
+        XCTAssertFalse(localTranscript.shouldResolveScreenContext(for: .shortcutPrefetch))
         XCTAssertFalse(localTranscript.shouldPassImagesToTranscriptEnhancer)
-        XCTAssertEqual(localTranscript.transcriptEnhancerProfileName, "local_ocr_text")
+        XCTAssertEqual(localTranscript.transcriptEnhancerProfileName, "local_text_only")
 
         let localAgent = LocalProcessingRouter.contextProfile(runtimeMode: .local, mode: .agent)
-        XCTAssertTrue(localAgent.shouldPrefetchScreenContext)
-        XCTAssertTrue(localAgent.shouldResolveScreenContext(for: .shortcutPrefetch))
-        XCTAssertTrue(localAgent.shouldResolveScreenContext(for: .workingAgent))
+        XCTAssertFalse(localAgent.shouldPrefetchScreenContext)
+        XCTAssertFalse(localAgent.shouldResolveScreenContext(for: .shortcutPrefetch))
+        XCTAssertFalse(localAgent.shouldResolveScreenContext(for: .workingAgent))
         XCTAssertTrue(localAgent.shouldPassImagesToWorkingAgent)
 
         let hostedTranscript = LocalProcessingRouter.contextProfile(runtimeMode: .hosted, mode: .transcription)
@@ -157,7 +160,7 @@ final class LocalProcessingModeTests: XCTestCase {
         )
     }
 
-    func testLocalTranscriptEnhancerRequestKeepsOCRTextAndStripsHeavyContext() {
+    func testLocalTranscriptEnhancerRequestIsTextOnly() {
         let request = makeEnvelope()
         let localRequest = LocalProcessingRouter.localTranscriptEnhancerRequest(from: request)
 
@@ -168,11 +171,11 @@ final class LocalProcessingModeTests: XCTestCase {
         XCTAssertNil(localRequest.continuationContext)
         XCTAssertTrue(localRequest.attachments.isEmpty)
         XCTAssertTrue(localRequest.conversationHistory.isEmpty)
-        XCTAssertTrue(localRequest.screenContext.hasScreenContext)
-        XCTAssertEqual(localRequest.screenContext.screenText, "screen text")
+        XCTAssertFalse(localRequest.screenContext.hasScreenContext)
+        XCTAssertNil(localRequest.screenContext.screenText)
         XCTAssertNil(localRequest.screenContext.screenDescription)
         XCTAssertNil(localRequest.clipboardText)
-        XCTAssertEqual(localRequest.myElsonMarkdown, "## Words\n- Teerling\n- Elson.ai")
+        XCTAssertEqual(localRequest.myElsonMarkdown, "")
         XCTAssertEqual(localRequest.transcriptAgentPrompt, "")
     }
 
@@ -183,14 +186,14 @@ final class LocalProcessingModeTests: XCTestCase {
         XCTAssertTrue(prompt.userPrompt.contains("raw transcript"))
         XCTAssertTrue(prompt.systemPrompt.localizedCaseInsensitiveContains("local Transcript assistant"))
         XCTAssertTrue(prompt.systemPrompt.localizedCaseInsensitiveContains("translate"))
-        XCTAssertTrue(prompt.systemPrompt.localizedCaseInsensitiveContains("reply, email, or message"))
-        XCTAssertTrue(prompt.userPrompt.contains("screen_text:"))
+        XCTAssertFalse(prompt.systemPrompt.localizedCaseInsensitiveContains("screen_text"))
+        XCTAssertFalse(prompt.userPrompt.contains("screen_text:"))
         XCTAssertFalse(prompt.userPrompt.contains("screen_description"))
         XCTAssertGreaterThanOrEqual(prompt.maxTokens, 160)
         XCTAssertLessThanOrEqual(prompt.maxTokens, 900)
     }
 
-    func testLocalTranscriptEnhancerPromptCanCarryOCRRuntimeData() {
+    func testLocalTranscriptEnhancerPromptIgnoresScreenRuntimeData() {
         let prompt = LocalTranscriptEnhancerPromptBuilder.transcriptEnhancerPrompt(
             transcript: "  raw transcript  ",
             screenContext: ElsonScreenContextPayload(
@@ -202,31 +205,24 @@ final class LocalProcessingModeTests: XCTestCase {
 
         XCTAssertTrue(prompt.userPrompt.contains("raw_transcript:"))
         XCTAssertTrue(prompt.userPrompt.contains("raw transcript"))
-        XCTAssertTrue(prompt.userPrompt.contains("screen_text:"))
-        XCTAssertTrue(prompt.userPrompt.contains("visible text"))
+        XCTAssertFalse(prompt.userPrompt.contains("screen_text:"))
+        XCTAssertFalse(prompt.userPrompt.contains("visible text"))
         XCTAssertFalse(prompt.userPrompt.contains("screen_description"))
         XCTAssertFalse(prompt.userPrompt.contains("visible layout"))
         XCTAssertLessThanOrEqual(prompt.maxTokens, 900)
     }
 
-    func testLocalTranscriptEnhancerPromptCarriesLeanContext() {
+    func testLocalTranscriptEnhancerPromptCarriesOnlyRawTranscript() {
         let request = LocalProcessingRouter.localTranscriptEnhancerRequest(from: makeEnvelope())
         let prompt = LocalTranscriptEnhancerPromptBuilder.transcriptEnhancerPrompt(request: request)
 
         XCTAssertTrue(prompt.userPrompt.contains("raw_transcript:"))
         XCTAssertTrue(prompt.userPrompt.contains("raw transcript"))
-        XCTAssertTrue(prompt.userPrompt.contains("transcript_snippet_count: 1"))
-        XCTAssertTrue(prompt.userPrompt.contains("transcript_chunk_timing:"))
-        XCTAssertTrue(prompt.userPrompt.contains("chunk 1, snippet 1"))
-        XCTAssertTrue(prompt.userPrompt.contains("audio=0-5s"))
-        XCTAssertTrue(prompt.userPrompt.contains("local_date_time: 2026-05-14 12:00:00"))
-        XCTAssertTrue(prompt.userPrompt.contains("local_date: 2026-05-14"))
-        XCTAssertTrue(prompt.userPrompt.contains("local_time: 12:00:00"))
-        XCTAssertTrue(prompt.userPrompt.contains("timezone: Europe/Amsterdam"))
-        XCTAssertTrue(prompt.userPrompt.contains("words_glossary:"))
-        XCTAssertTrue(prompt.userPrompt.contains("Teerling"))
-        XCTAssertTrue(prompt.userPrompt.contains("screen_text:"))
-        XCTAssertTrue(prompt.userPrompt.contains("screen text"))
+        XCTAssertFalse(prompt.userPrompt.contains("transcript_snippet_count:"))
+        XCTAssertFalse(prompt.userPrompt.contains("transcript_chunk_timing:"))
+        XCTAssertFalse(prompt.userPrompt.contains("local_date_time:"))
+        XCTAssertFalse(prompt.userPrompt.contains("words_glossary:"))
+        XCTAssertFalse(prompt.userPrompt.contains("screen_text:"))
         XCTAssertFalse(prompt.userPrompt.contains("screen_description"))
         XCTAssertFalse(prompt.userPrompt.contains("clipboard"))
         XCTAssertFalse(prompt.userPrompt.contains("myelson_markdown"))
@@ -239,11 +235,13 @@ final class LocalProcessingModeTests: XCTestCase {
             attachmentSummary: "image | screen.jpg | image/jpeg | source=auto"
         )
 
-        XCTAssertTrue(prompt.contains("raw_transcript:"))
+        XCTAssertTrue(prompt.contains("transcript_context:"))
+        XCTAssertTrue(prompt.contains("agent_intent_transcript:"))
+        XCTAssertTrue(prompt.contains("raw_combined_transcript_debug:"))
         XCTAssertTrue(prompt.contains("raw transcript"))
         XCTAssertTrue(prompt.contains("transcript_snippet_count: 1"))
         XCTAssertTrue(prompt.contains("transcript_chunk_timing:"))
-        XCTAssertTrue(prompt.contains("chunk 1, snippet 1"))
+        XCTAssertTrue(prompt.contains("chunk 1, phase=transcript, snippet 1"))
         XCTAssertTrue(prompt.contains("audio=0-5s"))
         XCTAssertTrue(prompt.contains("local_date_time: 2026-05-14 12:00:00"))
         XCTAssertTrue(prompt.contains("frontmost_app_name: Safari"))
@@ -268,14 +266,14 @@ final class LocalProcessingModeTests: XCTestCase {
 
         XCTAssertEqual(
             detail,
-            "FluidAudio v3 auto. Gemma 4 E2B handles Transcript + Agent. LightOnOCR extracts screen text. Total ~4.6 GB."
+            "FluidAudio v3 auto. Gemma 4 E2B handles Transcript + Agent. Total ~3.6 GB."
         )
         XCTAssertEqual(LocalProcessorStatus.sharedGemmaDisplayName, "Gemma 4 E2B (4-bit) (Transcript + Agent)")
-        XCTAssertEqual(LocalProcessorStatus.ocrScreenTextDisplayName, "LightOnOCR 1B (4-bit) (screen text)")
     }
 
-    func testDefaultLocalConfigEnablesTranscriptOCR() {
-        XCTAssertTrue(ElsonLocalConfig.default.transcriptScreenOCR)
+    func testDefaultLocalConfigDisablesTranscriptOCR() {
+        XCTAssertFalse(ElsonLocalConfig.default.transcriptScreenOCR)
+        XCTAssertEqual(ElsonLocalConfig.default.transcriptShortcut, .localDualPhaseDefault)
     }
 
     func testChatMessageRowsDoNotExposeInlineFeedbackControls() throws {
@@ -289,12 +287,11 @@ final class LocalProcessingModeTests: XCTestCase {
         XCTAssertTrue(try repoSource("Elson/Views/FeedbackPanelView.swift").contains("submitFeedback"))
     }
 
-    func testTranscriptWarmupStartsOCRAndGemmaIndependently() throws {
+    func testTranscriptWarmupStartsGemmaWithoutOCR() throws {
         let source = try repoSource("Elson/Runtime/LocalProcessingServices.swift")
 
-        XCTAssertTrue(source.contains("async let ocrWarmup"))
-        XCTAssertTrue(source.contains("async let gemmaWarmup"))
-        XCTAssertTrue(source.contains("stage=lighton_ocr_load_failed continued=true"))
+        XCTAssertFalse(source.contains("async let ocrWarmup"))
+        XCTAssertFalse(source.contains("LocalLightOnOCRService"))
         XCTAssertTrue(source.contains("stage=transcript_llm_load_started"))
     }
 
@@ -304,8 +301,115 @@ final class LocalProcessingModeTests: XCTestCase {
         XCTAssertTrue(source.contains("total_enhancer_ms"))
         XCTAssertTrue(source.contains("gemma_prepare_wait_ms"))
         XCTAssertTrue(source.contains("gemma_generation_ms"))
-        XCTAssertTrue(source.contains("ocr_prepare_wait_ms"))
-        XCTAssertTrue(source.contains("ocr_generation_ms"))
+        XCTAssertFalse(source.contains("ocr_prepare_wait_ms"))
+        XCTAssertFalse(source.contains("ocr_generation_ms"))
+    }
+
+    func testLocalShortcutPathBypassesLegacyChunkFinalizeAndGroqStage() throws {
+        let keyboardSource = try repoSource("Elson/Services/KeyboardService.swift")
+        let coordinatorSource = try repoSource("Elson/Services/LocalVoiceRunCoordinator.swift")
+
+        XCTAssertTrue(keyboardSource.contains("beginLocalVoiceRecording("))
+        XCTAssertTrue(keyboardSource.contains("finishLocalVoiceRecording("))
+        XCTAssertTrue(keyboardSource.contains("if appSettings.runtimeMode == .local"))
+        XCTAssertFalse(coordinatorSource.contains("HostedChunkedAudioSession"))
+        XCTAssertFalse(coordinatorSource.contains("allowPartialAfter"))
+        XCTAssertFalse(coordinatorSource.contains(".groqTranscription"))
+        XCTAssertTrue(coordinatorSource.contains(".audioTranscription"))
+        XCTAssertTrue(coordinatorSource.contains("Voice message..."))
+        XCTAssertTrue(coordinatorSource.contains("chatStore.replaceMessage"))
+    }
+
+    func testLocalRecordingStartsBeforeProcessorWarmup() throws {
+        let keyboardSource = try repoSource("Elson/Services/KeyboardService.swift")
+        let appSettingsSource = try repoSource("Elson/Models/AppSettings.swift")
+        let localProcessingSource = try repoSource("Elson/Runtime/LocalProcessingServices.swift")
+        let start = try XCTUnwrap(keyboardSource.range(of: "private func beginLocalVoiceRecording"))
+        let end = try XCTUnwrap(keyboardSource.range(of: "private func finishLocalVoiceRecording"))
+        let localStartSource = String(keyboardSource[start.lowerBound..<end.lowerBound])
+        let recordingStarted = try XCTUnwrap(localStartSource.range(of: "name: \"recording_started\""))
+        let warmup = try XCTUnwrap(localStartSource.range(of: "startLocalProcessorCommandWarmup"))
+
+        XCTAssertLessThan(recordingStarted.lowerBound, warmup.lowerBound)
+        XCTAssertTrue(localStartSource.contains("if !PermissionCoordinator.hasMicrophonePermission()"))
+        XCTAssertTrue(localStartSource.contains("reason: \"recording_started\""))
+        XCTAssertFalse(localStartSource.contains("reason: \"shortcut_detected\""))
+        XCTAssertTrue(appSettingsSource.contains("Task { [weak self] in"))
+        XCTAssertTrue(localProcessingSource.contains("commandLLMWarmupDelayNanoseconds: UInt64 = 2_500_000_000"))
+    }
+
+    func testLocalComposerPathUsesLocalVoiceCoordinatorNotHostedChunking() throws {
+        let windowSource = try repoSource("Elson/Views/ThreadHistoryWindowView.swift")
+
+        XCTAssertTrue(windowSource.contains("toggleLocalVoiceCapture()"))
+        XCTAssertTrue(windowSource.contains("LocalVoiceCaptureSession("))
+        XCTAssertTrue(windowSource.contains("LocalVoiceRunCoordinator.shared.processCapturedRun"))
+        XCTAssertTrue(windowSource.contains("if config.runtimeMode == .local, hasLocalVoice"))
+        XCTAssertTrue(windowSource.contains("reason: \"chat_voice_recording_started\""))
+        XCTAssertTrue(windowSource.contains("captureScreenshotDataIfPossible(fullScreen: true)"))
+    }
+
+    func testLocalReplayUsesLocalVoiceCoordinatorAndPreservesSessions() throws {
+        let settingsSource = try repoSource("Elson/Models/AppSettings.swift")
+        let coordinatorSource = try repoSource("Elson/Services/LocalVoiceRunCoordinator.swift")
+
+        XCTAssertTrue(settingsSource.contains("LocalVoiceRunCoordinator.shared.reprocessCapturedSession"))
+        XCTAssertTrue(coordinatorSource.contains("func reprocessCapturedSession"))
+        XCTAssertFalse(coordinatorSource.contains("purgeAllSessions"))
+        XCTAssertFalse(coordinatorSource.contains("purgeCapturedAudioSessions"))
+    }
+
+    func testLocalAgentSendsScreenshotDirectlyToGemmaE2B() throws {
+        let keyboardSource = try repoSource("Elson/Services/KeyboardService.swift")
+        let runtimeSource = try repoSource("Elson/Runtime/ElsonRuntime.swift")
+        let localProcessingSource = try repoSource("Elson/Runtime/LocalProcessingServices.swift")
+
+        XCTAssertTrue(keyboardSource.contains("captureScreenshotDataIfPossible(fullScreen: true)"))
+        XCTAssertTrue(runtimeSource.contains("config.runtimeMode == .local"))
+        XCTAssertTrue(runtimeSource.contains("LocalScreenContext(hasScreenContext: true, screenText: nil, screenDescription: nil)"))
+        XCTAssertTrue(localProcessingSource.contains("service: \"local_gemma_e2b_working_agent\""))
+        XCTAssertTrue(localProcessingSource.contains("model: LocalProcessorStatus.gemmaModel.rawValue"))
+        XCTAssertTrue(localProcessingSource.contains("images=\\(images.count) thinking=enabled"))
+        XCTAssertFalse(localProcessingSource.contains("LocalLightOnOCRService"))
+    }
+
+    func testLocalCapturedSessionStorePersistsPhaseAudioPaths() throws {
+        let root = tempDirectory.appendingPathComponent("phase-store", isDirectory: true)
+        let store = LocalCapturedAudioSessionStore(rootURL: root, retentionDays: 30)
+        let sessionId = UUID().uuidString
+        _ = try store.createSession(
+            sessionId: sessionId,
+            createdAt: Date(),
+            requestId: "request",
+            threadId: "thread",
+            sourceSurface: "shortcut",
+            mode: InteractionMode.agent.rawValue
+        )
+
+        let transcriptAudio = tempDirectory.appendingPathComponent("transcript.wav")
+        let intentAudio = tempDirectory.appendingPathComponent("intent.wav")
+        try Data("transcript".utf8).write(to: transcriptAudio)
+        try Data("intent".utf8).write(to: intentAudio)
+
+        let transcriptURL = try store.stagePhaseAudio(sessionId: sessionId, phase: .transcript, sourceURL: transcriptAudio)
+        let intentURL = try store.stagePhaseAudio(sessionId: sessionId, phase: .agentIntent, sourceURL: intentAudio)
+        try store.writeRawTranscript(
+            sessionId: sessionId,
+            rawTranscript: "transcript\n\nintent",
+            snippetCount: 2,
+            transcriptRawText: "transcript",
+            agentIntentRawText: "intent",
+            transcriptChunkTimings: [],
+            status: .ready
+        )
+
+        let snapshot = try XCTUnwrap(store.load(sessionId: sessionId))
+        XCTAssertEqual(snapshot.transcriptAudioFilePath, transcriptURL.path)
+        XCTAssertEqual(snapshot.agentIntentAudioFilePath, intentURL.path)
+        XCTAssertEqual(snapshot.transcriptRawText, "transcript")
+        XCTAssertEqual(snapshot.agentIntentRawText, "intent")
+        XCTAssertEqual(store.phaseAudioURL(sessionId: sessionId, phase: .transcript)?.path, transcriptURL.path)
+        XCTAssertEqual(store.phaseAudioURL(sessionId: sessionId, phase: .agentIntent)?.path, intentURL.path)
     }
 
     func testRuntimeModeCodableRoundTrip() throws {

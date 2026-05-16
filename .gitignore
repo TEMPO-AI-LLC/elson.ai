@@ -9,7 +9,10 @@ Elson/build/
 .omx/context/
 .omx/project-memory.json
 *.dmg
-evals_python/fixtures/
+evals_python/fixtures/*
+!evals_python/fixtures/local-agent/
+!evals_python/fixtures/local-agent/README.md
+!evals_python/fixtures/local-agent/local_agent_cases.csv
 evals_python/results/
 evals_python/fixtures/review-csv-historical/
 all_logged_transcripts_agent_review.csv
